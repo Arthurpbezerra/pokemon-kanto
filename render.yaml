@@ -6,6 +6,7 @@ services:
   - type: web
     name: pokemon-kanto-server
     runtime: node
+    plan: free
     buildCommand: npm install
     startCommand: npm start
     envVars:
