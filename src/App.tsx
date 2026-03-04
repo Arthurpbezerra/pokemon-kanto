@@ -599,11 +599,15 @@ export default function App() {
   const effectivePlayerIndex = isMultiplayer && myPlayerIndex >= 0 ? myPlayerIndex : game.currentPlayerIndex;
   const currentPlayer = game.players[effectivePlayerIndex];
 
+  const isMyBattle = !game.wildEncounter?.triggeredByPlayerId || game.wildEncounter.triggeredByPlayerId === socket?.id;
+  const effectivePhase: Phase =
+    isMultiplayer && game.phase === "battle" && !isMyBattle ? "map" : game.phase;
+
   return (
     <div className="min-h-screen p-3 sm:p-4 pb-0">
       <header className="mb-3 sm:mb-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
         <h1 className="text-sm sm:text-xl text-yellow-300 truncate">Pokémon Kanto</h1>
-        {game.phase !== "home" && (
+        {effectivePhase !== "home" && (
           <div className="text-xs sm:text-sm text-gray-300">
             {isMultiplayer && currentPlayer ? (
               <>You: <strong>{currentPlayer.name}</strong></>
@@ -615,7 +619,7 @@ export default function App() {
       </header>
 
       <main className="main-with-nav">
-        {game.phase === "home" && (
+        {effectivePhase === "home" && (
           <HomeScreen
             socket={socket}
             joinError={game.joinError}
@@ -623,16 +627,16 @@ export default function App() {
           />
         )}
 
-        {game.phase !== "home" && game.players.length > 0 && !isMultiplayer && (
+        {effectivePhase !== "home" && game.players.length > 0 && !isMultiplayer && (
           <div className="mb-4">
             <PlayerSwitcher players={game.players} current={game.currentPlayerIndex} setCurrent={game.setCurrentPlayerIndex} />
           </div>
         )}
-        {game.phase !== "home" && isMultiplayer && currentPlayer && (
+        {effectivePhase !== "home" && isMultiplayer && currentPlayer && (
           <div className="mb-2 text-xs text-gray-400">Playing as <strong className="text-yellow-300">{currentPlayer.name}</strong></div>
         )}
 
-        {game.phase === "lobby" && (
+        {effectivePhase === "lobby" && (
           <LobbyScreen
             players={game.players}
             addPlayer={game.addPlayer}
@@ -643,7 +647,7 @@ export default function App() {
           />
         )}
 
-        {game.phase === "starter" && starters && (
+        {effectivePhase === "starter" && starters && (
           <StarterSelectScreen
             players={game.players}
             selectStarter={game.selectStarter}
@@ -652,7 +656,7 @@ export default function App() {
           />
         )}
 
-        {game.phase === "map" && (
+        {effectivePhase === "map" && (
           <MapScreen
             players={game.players}
             currentPlayerIndex={effectivePlayerIndex}
@@ -707,7 +711,7 @@ export default function App() {
           </div>
         )}
 
-        {game.phase === "battle" && game.wildEncounter && (!game.wildEncounter.triggeredByPlayerId || game.wildEncounter.triggeredByPlayerId === socket?.id) && currentPlayer && (
+        {game.phase === "battle" && game.wildEncounter && isMyBattle && currentPlayer && (
           <BattleModal
             playerPokemon={currentPlayer.team[0]}
             enemyPokemon={game.wildEncounter.pokemon}
@@ -751,7 +755,7 @@ export default function App() {
           return <LearnMoveModal pokemonName={mon.name} currentMoves={mon.moves ?? []} newMove={game.pendingLearn!.newMove} onReplace={(i:number)=>{ game.finalizeLearn(i); }} onSkip={()=>{ game.finalizeLearn(null); }} />;
         })()}
       </main>
-      {game.phase !== "home" && (
+      {effectivePhase !== "home" && (
         <BottomNav onSearch={() => { game.searchWild(currentPlayer?.id ?? ""); }} onTeam={() => setShowTeam(true)} onMap={() => game.setPhase("map")} onMenu={() => setShowMenu((s)=>!s)} />
       )}
     </div>
