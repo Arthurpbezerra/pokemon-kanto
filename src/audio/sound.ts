@@ -1,13 +1,13 @@
 /**
  * Simple sound effects and optional music.
  * Add files to public/sounds/ with these names (either .mp3 or .mp4):
- *   battle-start, capture, level-up, evolution, achievement, attack, run, button
- * Example: battle-start.mp3 or battle-start.mp4
+ *   battle-start, capture, level-up, evolution, achievement, gym-victory, attack, run, button
+ * Example: battle-start.mp3 or gym-victory.mp3
  */
 
 const STORAGE_MUTE = "pokemon-kanto-mute";
 
-const SOUND_KEYS = ["battle-start", "capture", "level-up", "evolution", "achievement", "attack", "run", "button"] as const;
+const SOUND_KEYS = ["battle-start", "capture", "level-up", "evolution", "achievement", "gym-victory", "attack", "run", "button"] as const;
 export type SfxKey = (typeof SOUND_KEYS)[number];
 
 const base = (typeof import.meta !== "undefined" && (import.meta as any).env?.BASE_URL) || "/";
@@ -61,8 +61,10 @@ const preloaded: Record<string, HTMLAudioElement> = {};
 const stopTimeouts: Record<string, ReturnType<typeof setTimeout>> = {};
 
 /** Keys that auto-stop after a few seconds (so long clips don't run forever). */
-const AUTO_STOP_KEYS = ["level-up", "capture", "evolution", "achievement"] as const;
+const AUTO_STOP_KEYS = ["level-up", "capture", "evolution", "achievement", "gym-victory"] as const;
 const AUTO_STOP_SECONDS = 2.5;
+/** Longer stop for fanfare-style sounds (e.g. gym victory). */
+const GYM_VICTORY_STOP_SECONDS = 5;
 
 function getPath(key: string, ext: "mp3" | "mp4"): string {
   return `${basePath}/${key}.${ext}`;
@@ -113,14 +115,16 @@ export function playSfx(key: SfxKey | string): void {
     pre.volume = VOLUME;
     pre.play().catch(() => {});
     if (AUTO_STOP_KEYS.includes(k as any)) {
-      stopTimeouts[k] = setTimeout(() => stopSfx(k), AUTO_STOP_SECONDS * 1000);
+      const stopMs = k === "gym-victory" ? GYM_VICTORY_STOP_SECONDS * 1000 : AUTO_STOP_SECONDS * 1000;
+      stopTimeouts[k] = setTimeout(() => stopSfx(k), stopMs);
     }
     return;
   }
   const pathBase = `${basePath}/${key}`;
   tryPlay(`${pathBase}.mp3`).catch(() => tryPlay(`${pathBase}.mp4`).catch(() => {}));
   if (AUTO_STOP_KEYS.includes(k as any)) {
-    stopTimeouts[k] = setTimeout(() => stopSfx(k), AUTO_STOP_SECONDS * 1000);
+    const stopMs = k === "gym-victory" ? GYM_VICTORY_STOP_SECONDS * 1000 : AUTO_STOP_SECONDS * 1000;
+    stopTimeouts[k] = setTimeout(() => stopSfx(k), stopMs);
   }
 }
 

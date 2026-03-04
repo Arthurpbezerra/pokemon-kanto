@@ -8,6 +8,7 @@ import LearnMoveModal from "./components/LearnMoveModal";
 import BattleModal from "./components/BattleModal";
 import CityModal from "./components/CityModal";
 import AchievementToast, { type AchievementData } from "./components/AchievementToast";
+import KantoMapView from "./components/KantoMapView";
 
 const WS_URL = (import.meta.env.VITE_WS_URL && String(import.meta.env.VITE_WS_URL).trim()) || (typeof window !== "undefined" ? window.location.origin : "http://localhost:3001");
 const SOLO_SAVE_KEY = "pokemon-kanto-solo";
@@ -840,6 +841,7 @@ export default function App() {
   const [gymVictory, setGymVictory] = useState<string | null>(null);
   const [showTeam, setShowTeam] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
+  const [showKantoMap, setShowKantoMap] = useState(false);
   const [muted, setMuted] = useState(() => sound.isMuted());
   const [achievementToast, setAchievementToast] = useState<null | (AchievementData & { id: string })>(null);
 
@@ -1245,7 +1247,7 @@ export default function App() {
                   </button>
                 </div>
               )}
-              <p className="text-[10px] text-gray-500 mt-3">Put your .mp3 in <code className="bg-gray-800 px-1 rounded">public/sounds/</code>: battle-start.mp3, capture.mp3, level-up.mp3, evolution.mp3, achievement.mp3</p>
+              <p className="text-[10px] text-gray-500 mt-3">Put your .mp3 in <code className="bg-gray-800 px-1 rounded">public/sounds/</code>: battle-start, capture, level-up, evolution, achievement, gym-victory</p>
             </div>
           </div>
         )}
@@ -1257,7 +1259,14 @@ export default function App() {
         })()}
       </main>
       {viewScreen === "map" && (
-        <BottomNav onSearch={() => { game.searchWild(currentPlayer?.id ?? ""); }} onTeam={() => setShowTeam(true)} onMap={() => game.setPhase("map")} onMenu={() => setShowMenu((s)=>!s)} />
+        <BottomNav onTeam={() => setShowTeam(true)} onMap={() => setShowKantoMap(true)} onMenu={() => setShowMenu((s)=>!s)} />
+      )}
+      {showKantoMap && viewScreen === "map" && currentPlayer && (
+        <KantoMapView
+          locations={LOCATIONS as Record<string, { type: "town" | "grass" | "water" | "cave"; connections: string[]; x: number; y: number; gym?: string | null }>}
+          currentLocation={currentPlayer.location}
+          onClose={() => setShowKantoMap(false)}
+        />
       )}
     </div>
   );
@@ -1581,7 +1590,7 @@ function MapScreen({
             const pct = Math.max(0, (curHp / maxHp) * 100);
             const hpCol = pct > 60 ? "bg-green-500" : pct > 30 ? "bg-yellow-500" : "bg-red-500";
             return (
-              <div key={pk.id} className={`flex items-center gap-2 bg-gray-700/80 p-2 rounded-lg min-w-0 border ${idx === 0 ? "border-amber-500/50" : "border-transparent"}`}>
+              <div key={`${pk.id}-${idx}`} className={`flex items-center gap-2 bg-gray-700/80 p-2 rounded-lg min-w-0 border ${idx === 0 ? "border-amber-500/50" : "border-transparent"}`}>
                 <img src={pk.sprite} className="w-10 h-10 sm:w-12 sm:h-12 flex-shrink-0 rounded-lg bg-gray-800" alt={pk.name} />
                 <div className="min-w-0 flex-1">
                   <div className="text-xs sm:text-sm truncate">{idx === 0 && "★ "}{pk.name} Lv{pk.level}</div>

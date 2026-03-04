@@ -21,7 +21,8 @@ export default function AchievementToast({
   const [visible, setVisible] = useState(false);
 
   useEffect(() => {
-    sound.playSfx("achievement");
+    if (data.type === "gym") sound.playSfx("gym-victory");
+    else sound.playSfx("achievement");
     const t = setTimeout(() => setVisible(true), 50);
     return () => clearTimeout(t);
   }, []);

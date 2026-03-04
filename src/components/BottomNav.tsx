@@ -1,8 +1,7 @@
 import React from "react";
 
-export default function BottomNav({ onSearch, onTeam, onMap, onMenu }: { onSearch: () => void; onTeam: () => void; onMap: () => void; onMenu: () => void }) {
+export default function BottomNav({ onTeam, onMap, onMenu }: { onTeam: () => void; onMap: () => void; onMenu: () => void }) {
   const items = [
-    { label: "Search", icon: "🔍", onClick: onSearch },
     { label: "Team", icon: "👥", onClick: onTeam },
     { label: "Map", icon: "🗺", onClick: onMap },
     { label: "Menu", icon: "☰", onClick: onMenu },
