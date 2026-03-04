@@ -29,6 +29,9 @@ jobs:
 
       - name: Build
         run: npx vite build --base=/${{ github.event.repository.name }}/
+        env:
+          # URL do servidor multiplayer (Render). Configure em Settings → Secrets → VITE_WS_URL
+          VITE_WS_URL: ${{ secrets.VITE_WS_URL }}
 
       - name: Deploy to gh-pages
         uses: peaceiris/actions-gh-pages@v4

@@ -1,10 +1,13 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
+import { io, Socket } from "socket.io-client";
 import { getPokemonTemplate, getStarters, makeInstanceFromTemplate, getMovesForLevel, getNextEvolution, xpToNextForLevel } from "./api/pokeapi";
 import BottomNav from "./components/BottomNav";
 import TeamPanel from "./components/TeamPanel";
 import LearnMoveModal from "./components/LearnMoveModal";
 import BattleModal from "./components/BattleModal";
 import CityModal from "./components/CityModal";
+
+const WS_URL = (import.meta.env.VITE_WS_URL && String(import.meta.env.VITE_WS_URL).trim()) || (typeof window !== "undefined" ? window.location.origin : "http://localhost:3001");
 
 type Pokemon = {
   id: number;
@@ -32,10 +35,21 @@ type Player = {
   badges: string[];
 };
 
-type Phase = "lobby" | "starter" | "map" | "encounter" | "battle";
+type Phase = "home" | "lobby" | "starter" | "map" | "encounter" | "battle";
 
 const generateCode = () =>
-  Math.random().toString(36).slice(2, 6).toUpperCase();
+  Math.random().toString(36).slice(2, 8).toUpperCase();
+
+export type GameStateSnapshot = {
+  phase: Phase;
+  roomCode: string;
+  players: Player[];
+  currentPlayerIndex: number;
+  wildEncounter: null | { pokemon: Pokemon; location: string };
+  encounterLog: string[];
+  pendingLearn: null | { playerIndex: number; pokemonIndex: number; newMove: string; newLevel: number };
+  evolutionNotice: null | { playerIndex: number; oldName: string; newName: string };
+};
 
 const STARTER_IDS = [1, 4, 7];
 
@@ -88,26 +102,68 @@ const MAP_ROWS: string[][] = [
   ["Route 13", "Route 14", "Route 15", "Fuchsia City"]
 ];
 
-function useGameState() {
-  const [phase, setPhase] = useState<Phase>("lobby");
-  const [roomCode] = useState(generateCode());
-  const [players, setPlayers] = useState<Player[]>(() =>
-    Array.from({ length: 1 }).map((_, i) => ({
-      id: `p${i + 1}`,
-      name: `Player ${i + 1}`,
-      color: ["red", "blue", "green", "yellow"][i],
-      isHost: i === 0,
-      isReady: false,
-      location: "Pallet Town",
-      team: [],
-      badges: []
-    }))
-  );
+function useGameState(socket: Socket | null) {
+  const [phase, setPhase] = useState<Phase>("home");
+  const [roomCode, setRoomCode] = useState("");
+  const [players, setPlayers] = useState<Player[]>([]);
   const [currentPlayerIndex, setCurrentPlayerIndex] = useState(0);
   const [wildEncounter, setWildEncounter] = useState<null | { pokemon: Pokemon; location: string }>(null);
   const [encounterLog, setEncounterLog] = useState<string[]>([]);
   const [pendingLearn, setPendingLearn] = useState<null | { playerIndex: number; pokemonIndex: number; newMove: string; newLevel: number }>(null);
   const [evolutionNotice, setEvolutionNotice] = useState<null | { playerIndex: number; oldName: string; newName: string }>(null);
+  const [joinError, setJoinError] = useState<string | null>(null);
+  const skipEmitRef = useRef(false);
+
+  const replaceState = (s: GameStateSnapshot) => {
+    skipEmitRef.current = true;
+    setPhase(s.phase);
+    setRoomCode(s.roomCode || "");
+    setPlayers(s.players ?? []);
+    setCurrentPlayerIndex(s.currentPlayerIndex ?? 0);
+    setWildEncounter(s.wildEncounter ?? null);
+    setEncounterLog(s.encounterLog ?? []);
+    setPendingLearn(s.pendingLearn ?? null);
+    setEvolutionNotice(s.evolutionNotice ?? null);
+  };
+
+  useEffect(() => {
+    if (!socket) return;
+    const onRoomCreated = (data: { roomCode: string; state: GameStateSnapshot }) => {
+      replaceState(data.state);
+    };
+    const onState = (state: GameStateSnapshot) => {
+      replaceState(state);
+    };
+    const onJoinError = (data: { message?: string }) => {
+      setJoinError(data?.message ?? "Could not join room");
+    };
+    socket.on("roomCreated", onRoomCreated);
+    socket.on("state", onState);
+    socket.on("joinError", onJoinError);
+    return () => {
+      socket.off("roomCreated", onRoomCreated);
+      socket.off("state", onState);
+      socket.off("joinError", onJoinError);
+    };
+  }, [socket]);
+
+  useEffect(() => {
+    if (!socket || !roomCode || skipEmitRef.current) {
+      if (skipEmitRef.current) skipEmitRef.current = false;
+      return;
+    }
+    const snapshot: GameStateSnapshot = {
+      phase,
+      roomCode,
+      players,
+      currentPlayerIndex,
+      wildEncounter,
+      encounterLog,
+      pendingLearn,
+      evolutionNotice
+    };
+    socket.emit("stateUpdate", snapshot);
+  }, [socket, roomCode, phase, players, currentPlayerIndex, wildEncounter, encounterLog, pendingLearn, evolutionNotice]);
 
   const addPlayer = (name: string) => {
     setPlayers((p) => {
@@ -129,13 +185,9 @@ function useGameState() {
     setPlayers((ps) => ps.map((pl) => (pl.id === id ? { ...pl, isReady: !pl.isReady } : pl)));
 
   const startGameIfReady = () => {
-    const readyCount = players.filter((p) => p.isReady).length;
-    if (players.length >= 2 && readyCount >= 2) {
-      setPhase("starter");
-    } else {
-      // allow host force start if desired
-      setPhase("starter");
-    }
+    if (players.length === 0) return;
+    const allReady = players.every((p) => p.isReady);
+    if (allReady) setPhase("starter");
   };
 
   const selectStarter = (playerId: string, starterId: number) => {
@@ -491,23 +543,35 @@ function useGameState() {
     movePlayer,
     wildEncounter,
     setWildEncounter,
-    captureAttempt
-    , updatePlayerLead,
+    captureAttempt,
+    updatePlayerLead,
     healPlayer,
-    searchWild
-    , pendingLearn, finalizeLearn
-    , grantXpToLead
-    , evolutionNotice, setEvolutionNotice
+    searchWild,
+    pendingLearn,
+    finalizeLearn,
+    grantXpToLead,
+    evolutionNotice,
+    setEvolutionNotice,
+    replaceState,
+    joinError,
+    setJoinError
   };
 }
 
 export default function App() {
-  const game = useGameState();
+  const [socket, setSocket] = useState<Socket | null>(null);
+  const game = useGameState(socket);
   const [starters, setStarters] = useState<any[] | null>(null);
   const [cityModal, setCityModal] = useState<null | { name: string; description?: string; gym?: string | null }>(null);
   const [gymBattle, setGymBattle] = useState<null | { leader: string; team: any[]; index: number }>(null);
   const [showTeam, setShowTeam] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
+
+  useEffect(() => {
+    const s = io(WS_URL);
+    setSocket(s);
+    return () => { s.disconnect(); };
+  }, []);
 
   useEffect(() => {
     getStarters(STARTER_IDS).then((templates) => {
@@ -520,13 +584,25 @@ export default function App() {
     <div className="min-h-screen p-3 sm:p-4 pb-0">
       <header className="mb-3 sm:mb-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
         <h1 className="text-sm sm:text-xl text-yellow-300 truncate">Pokémon Kanto</h1>
-        <div className="text-xs sm:text-sm text-gray-300">Room: {game.roomCode}</div>
+        {game.phase !== "home" && (
+          <div className="text-xs sm:text-sm text-gray-300">Room: {game.roomCode || "—"}</div>
+        )}
       </header>
 
       <main className="main-with-nav">
-        <div className="mb-4">
-          <PlayerSwitcher players={game.players} current={game.currentPlayerIndex} setCurrent={game.setCurrentPlayerIndex} />
-        </div>
+        {game.phase === "home" && (
+          <HomeScreen
+            socket={socket}
+            joinError={game.joinError}
+            setJoinError={game.setJoinError}
+          />
+        )}
+
+        {game.phase !== "home" && game.players.length > 0 && (
+          <div className="mb-4">
+            <PlayerSwitcher players={game.players} current={game.currentPlayerIndex} setCurrent={game.setCurrentPlayerIndex} />
+          </div>
+        )}
 
         {game.phase === "lobby" && (
           <LobbyScreen
@@ -534,6 +610,7 @@ export default function App() {
             addPlayer={game.addPlayer}
             toggleReady={game.toggleReady}
             startGame={game.startGameIfReady}
+            roomCode={game.roomCode}
           />
         )}
 
@@ -653,7 +730,9 @@ export default function App() {
           return <LearnMoveModal pokemonName={mon.name} currentMoves={mon.moves ?? []} newMove={game.pendingLearn.newMove} onReplace={(i:number)=>{ game.finalizeLearn(i); }} onSkip={()=>{ game.finalizeLearn(null); }} />;
         })()}
       </main>
-      <BottomNav onSearch={() => { game.searchWild(game.players[game.currentPlayerIndex].id); }} onTeam={() => setShowTeam(true)} onMap={() => game.setPhase("map")} onMenu={() => setShowMenu((s)=>!s)} />
+      {game.phase !== "home" && (
+        <BottomNav onSearch={() => { game.searchWild(game.players[game.currentPlayerIndex]?.id ?? ""); }} onTeam={() => setShowTeam(true)} onMap={() => game.setPhase("map")} onMenu={() => setShowMenu((s)=>!s)} />
+      )}
     </div>
   );
 }
@@ -670,11 +749,79 @@ function PlayerSwitcher({ players, current, setCurrent }: { players: Player[]; c
   );
 }
 
-function LobbyScreen({ players, addPlayer, toggleReady, startGame }: { players: Player[]; addPlayer: (name: string) => void; toggleReady: (id: string) => void; startGame: () => void; }) {
+function HomeScreen({
+  socket,
+  joinError,
+  setJoinError
+}: {
+  socket: Socket | null;
+  joinError: string | null;
+  setJoinError: (v: string | null) => void;
+}) {
+  const [createName, setCreateName] = useState("");
+  const [joinCode, setJoinCode] = useState("");
+  const [joinName, setJoinName] = useState("");
+
+  const handleCreate = () => {
+    if (!socket) return;
+    socket.emit("createRoom", (createName || "Player 1").trim() || "Player 1");
+  };
+
+  const handleJoin = () => {
+    if (!socket) return;
+    setJoinError(null);
+    socket.emit("joinRoom", { code: joinCode.trim(), playerName: (joinName || "Player").trim() || "Player" });
+  };
+
+  return (
+    <div className="max-w-md mx-auto space-y-6">
+      <h2 className="text-sm sm:text-lg text-yellow-300 mb-4">Create or join a room</h2>
+
+      <div className="p-4 bg-gray-800 rounded-md">
+        <div className="font-bold text-xs sm:text-sm mb-2">Create room</div>
+        <input
+          className="w-full p-2 text-black text-sm min-h-[44px] mb-2 rounded"
+          placeholder="Your name"
+          value={createName}
+          onChange={(e) => setCreateName(e.target.value)}
+        />
+        <button className="pixel-btn w-full" onClick={handleCreate} disabled={!socket}>
+          Create room
+        </button>
+        <p className="text-[10px] text-gray-400 mt-2">You’ll get a code to share with others.</p>
+      </div>
+
+      <div className="p-4 bg-gray-800 rounded-md">
+        <div className="font-bold text-xs sm:text-sm mb-2">Join room</div>
+        <input
+          className="w-full p-2 text-black text-sm min-h-[44px] mb-2 rounded"
+          placeholder="Room code"
+          value={joinCode}
+          onChange={(e) => { setJoinCode(e.target.value.toUpperCase()); setJoinError(null); }}
+        />
+        <input
+          className="w-full p-2 text-black text-sm min-h-[44px] mb-2 rounded"
+          placeholder="Your name"
+          value={joinName}
+          onChange={(e) => setJoinName(e.target.value)}
+        />
+        <button className="pixel-btn w-full" onClick={handleJoin} disabled={!socket}>
+          Join room
+        </button>
+        {joinError && <p className="text-red-400 text-xs mt-2">{joinError}</p>}
+      </div>
+    </div>
+  );
+}
+
+function LobbyScreen({ players, addPlayer, toggleReady, startGame, roomCode }: { players: Player[]; addPlayer: (name: string) => void; toggleReady: (id: string) => void; startGame: () => void; roomCode?: string }) {
   const [name, setName] = useState("");
   return (
     <div>
-      <div className="mb-3 text-xs sm:text-sm">Lobby — invite friends (simulated)</div>
+      <div className="mb-3 text-xs sm:text-sm">
+        Lobby
+        {roomCode && <span className="block mt-1 text-yellow-300">Share code: <strong>{roomCode}</strong></span>}
+      </div>
       <div className="flex flex-col sm:flex-row gap-2 mb-3">
         <input className="p-2 text-black text-sm min-h-[44px]" placeholder="Name" value={name} onChange={(e) => setName(e.target.value)} />
         <button className="pixel-btn" onClick={() => { if (name.trim()) { addPlayer(name.trim()); setName(""); } }}>Add Player</button>
@@ -690,7 +837,20 @@ function LobbyScreen({ players, addPlayer, toggleReady, startGame }: { players: 
         ))}
       </div>
       <div className="mt-4">
-        <button className="pixel-btn w-full" onClick={startGame}>Start Game</button>
+        {players.length > 0 && (
+          <p className="text-xs text-gray-400 mb-2">
+            {players.every((p) => p.isReady)
+              ? "Everyone is ready!"
+              : `${players.filter((p) => p.isReady).length}/${players.length} ready`}
+          </p>
+        )}
+        <button
+          className="pixel-btn w-full disabled:opacity-50 disabled:cursor-not-allowed"
+          onClick={startGame}
+          disabled={players.length === 0 || !players.every((p) => p.isReady)}
+        >
+          Start Game
+        </button>
       </div>
     </div>
   );
