@@ -1,13 +1,16 @@
 import React, { useEffect, useRef, useState } from "react";
 import { io, Socket } from "socket.io-client";
 import { getPokemonTemplate, getStarters, makeInstanceFromTemplate, getMovesForLevel, getMovesLearnedAtLevel, getNextEvolution, xpToNextForLevel } from "./api/pokeapi";
+import * as sound from "./audio/sound";
 import BottomNav from "./components/BottomNav";
 import TeamPanel from "./components/TeamPanel";
 import LearnMoveModal from "./components/LearnMoveModal";
 import BattleModal from "./components/BattleModal";
 import CityModal from "./components/CityModal";
+import AchievementToast, { type AchievementData } from "./components/AchievementToast";
 
 const WS_URL = (import.meta.env.VITE_WS_URL && String(import.meta.env.VITE_WS_URL).trim()) || (typeof window !== "undefined" ? window.location.origin : "http://localhost:3001");
+const SOLO_SAVE_KEY = "pokemon-kanto-solo";
 
 type Pokemon = {
   id: number;
@@ -149,6 +152,35 @@ function useGameState(socket: Socket | null) {
   const playersLengthRef = useRef(0);
   myBattleRef.current = { phase, wildEncounter };
   playersLengthRef.current = players.length;
+
+  // Restore solo game after tab was killed (e.g. minimize on mobile)
+  useEffect(() => {
+    try {
+      const raw = typeof window !== "undefined" ? localStorage.getItem(SOLO_SAVE_KEY) : null;
+      if (!raw) return;
+      const data = JSON.parse(raw) as { roomCode?: string; phase?: Phase; players?: Player[]; currentPlayerIndex?: number };
+      if (data?.roomCode === "SOLO" && Array.isArray(data.players) && data.players.length > 0) {
+        setRoomCode("SOLO");
+        setPhase(data.phase === "battle" ? "map" : (data.phase || "map"));
+        setPlayers(data.players);
+        setCurrentPlayerIndex(data.currentPlayerIndex ?? 0);
+        setWildEncounter(null);
+      }
+    } catch {
+      // ignore invalid saved state
+    }
+  }, []);
+
+  // Persist solo game so it survives minimize/background and tab kill
+  useEffect(() => {
+    if (roomCode !== "SOLO" || players.length === 0) return;
+    try {
+      const toSave = phase === "battle" ? "map" : phase;
+      localStorage.setItem(SOLO_SAVE_KEY, JSON.stringify({ roomCode, phase: toSave, players, currentPlayerIndex }));
+    } catch {
+      // ignore quota / private mode
+    }
+  }, [roomCode, phase, players, currentPlayerIndex]);
 
   const replaceState = (s: GameStateSnapshot) => {
     skipEmitRef.current = true;
@@ -298,6 +330,7 @@ function useGameState(socket: Socket | null) {
     );
     const loc = LOCATIONS[to];
     if (loc?.type === "grass" && loc.wildPool?.length) {
+      sound.playSfx("battle-start");
       const pid = loc.wildPool[Math.floor(Math.random() * loc.wildPool.length)];
       getPokemonTemplate(pid).then((tpl) => {
         const lvl = Math.max(3, Math.floor(Math.random() * 5) + 3);
@@ -315,6 +348,7 @@ function useGameState(socket: Socket | null) {
     if (!pl) return;
     const loc = LOCATIONS[pl.location];
     if (!loc || !loc.wildPool || loc.wildPool.length === 0) return;
+    sound.playSfx("battle-start");
     const pid = loc.wildPool[Math.floor(Math.random() * loc.wildPool.length)];
     getPokemonTemplate(pid).then((tpl) => {
       const lvl = Math.max(3, Math.floor(Math.random() * 5) + 3);
@@ -332,6 +366,7 @@ function useGameState(socket: Socket | null) {
     if (idx < 0) return false;
     const ok = Math.random() < chance;
     if (ok) {
+      sound.playSfx("capture");
       setPlayers((ps) =>
         ps.map((pl, i) => (i === idx ? { ...pl, team: [...pl.team, wildEncounter.pokemon] } : pl))
       );
@@ -355,6 +390,7 @@ function useGameState(socket: Socket | null) {
       xpToNext = xpToNextForLevel(level);
     }
     const levelGained = level - oldLevel;
+    if (levelGained > 0) sound.playSfx("level-up");
     try {
       const tpl = await getPokemonTemplate(mon.id);
       const newInst = makeInstanceFromTemplate(tpl, level);
@@ -375,6 +411,7 @@ function useGameState(socket: Socket | null) {
             setPlayers((ps) =>
               ps.map((p, idx) => (idx === playerIdx ? { ...p, team: [evolved, ...p.team.slice(1)] } : p))
             );
+            sound.playSfx("evolution");
             setEvolutionNotice({ playerIndex: playerIdx, oldName: mon.name, newName: evolved.name });
             didEvolve = true;
           }
@@ -493,6 +530,7 @@ function useGameState(socket: Socket | null) {
                   return { ...pl, team: newTeam };
                 })
               );
+              sound.playSfx("evolution");
               setEvolutionNotice({ playerIndex: playerIdx, oldName: lead.name, newName: evolved.name });
               didEvolve = true;
             }
@@ -735,6 +773,20 @@ function useGameState(socket: Socket | null) {
     setPvpTrade(null);
   };
 
+  const leaveRoom = () => {
+    setPhase("home");
+    setRoomCode("");
+    setPlayers([]);
+    setCurrentPlayerIndex(0);
+    setWildEncounter(null);
+    setEncounterLog([]);
+    setPendingLearn(null);
+    setEvolutionNotice(null);
+    setPvpRequest(null);
+    setPvpBattle(null);
+    setPvpTrade(null);
+  };
+
   return {
     phase,
     setPhase,
@@ -774,7 +826,8 @@ function useGameState(socket: Socket | null) {
     setTradeSelection,
     executeTrade,
     cancelTrade,
-    startSingleplayer
+    startSingleplayer,
+    leaveRoom
   };
 }
 
@@ -787,6 +840,8 @@ export default function App() {
   const [gymVictory, setGymVictory] = useState<string | null>(null);
   const [showTeam, setShowTeam] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
+  const [muted, setMuted] = useState(() => sound.isMuted());
+  const [achievementToast, setAchievementToast] = useState<null | (AchievementData & { id: string })>(null);
 
   useEffect(() => {
     const s = io(WS_URL);
@@ -795,11 +850,30 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    const unlock = () => sound.unlockAudio();
+    document.addEventListener("click", unlock, { once: true, capture: true });
+    document.addEventListener("touchstart", unlock, { once: true, capture: true });
+    return () => {
+      document.removeEventListener("click", unlock, { capture: true });
+      document.removeEventListener("touchstart", unlock, { capture: true });
+    };
+  }, []);
+
+  useEffect(() => {
     getStarters(STARTER_IDS).then((templates) => {
       const instances = templates.map((t) => makeInstanceFromTemplate(t, 5));
       setStarters(instances);
     }).catch(() => {});
   }, []);
+
+  useEffect(() => {
+    if (!socket) return;
+    const onAchievement = (data: AchievementData) => {
+      setAchievementToast({ ...data, id: `${data.ts ?? Date.now()}-${Math.random().toString(36).slice(2)}` });
+    };
+    socket.on("achievement", onAchievement);
+    return () => { socket.off("achievement", onAchievement); };
+  }, [socket]);
 
   const isSolo = game.roomCode === "SOLO";
   const isMultiplayer = Boolean(game.roomCode && socket && !isSolo);
@@ -831,8 +905,8 @@ export default function App() {
 
   return (
     <div className="min-h-screen p-3 sm:p-4 pb-0">
-      <header className="mb-3 sm:mb-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-        <h1 className="text-sm sm:text-xl text-yellow-300 truncate">Pokémon Kanto</h1>
+      <header className="mb-3 sm:mb-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 pb-3 border-b-2 border-amber-500/30">
+        <h1 className="text-sm sm:text-xl text-yellow-300 truncate font-bold">Pokémon Kanto</h1>
         {viewScreen !== "home" && (
           <div className="text-xs sm:text-sm text-gray-300">
             {isMultiplayer && currentPlayer ? (
@@ -873,6 +947,14 @@ export default function App() {
             roomCode={game.roomCode}
             myPlayerId={myPlayerIdForUi}
             independentStart={isMultiplayer || isSolo}
+            onLeaveRoom={() => {
+              if (socket && game.roomCode && game.roomCode !== "SOLO") socket.emit("leaveRoom");
+              game.leaveRoom();
+              setGymBattle(null);
+              setGymVictory(null);
+              setCityModal(null);
+              setShowTeam(false);
+            }}
           />
         )}
 
@@ -882,6 +964,14 @@ export default function App() {
             selectStarter={game.selectStarter}
             starters={starters}
             myPlayerId={myPlayerIdForUi}
+            onLeaveRoom={() => {
+              if (socket && game.roomCode && game.roomCode !== "SOLO") socket.emit("leaveRoom");
+              game.leaveRoom();
+              setGymBattle(null);
+              setGymVictory(null);
+              setCityModal(null);
+              setShowTeam(false);
+            }}
           />
         )}
 
@@ -961,6 +1051,7 @@ export default function App() {
             playerTeam={currentPlayer.team}
             onSwitchPokemon={(i) => game.updatePlayerLead(currentPlayer!.id, i)}
             onEnd={(res) => {
+              sound.stopSfx("battle-start");
               game.setPhase("map");
               game.setWildEncounter(null);
               if (res.winner === "player" && currentPlayer) {
@@ -1002,6 +1093,7 @@ export default function App() {
             onSwitchPokemon={(i) => game.updatePlayerLead(currentPlayer!.id, i)}
             onPlayerUpdate={(p) => { if (currentPlayer) game.updateLeadPokemon(currentPlayer.id, p); }}
             onEnd={(res) => {
+              sound.stopSfx("battle-start");
               if (res.winner === "player") {
                 if (res.xpGain != null) {
                   setTimeout(() => game.grantXpToLead(effectivePlayerIndex, res.xpGain!), 0);
@@ -1012,6 +1104,12 @@ export default function App() {
                   game.addBadge(currentPlayer!.id, gymBattle.leader);
                   setGymVictory(gymBattle.leader);
                   setGymBattle(null);
+                  const achievementPayload = { type: "gym" as const, playerName: currentPlayer!.name, gymLeader: gymBattle.leader };
+                  if (socket && game.roomCode && game.roomCode !== "SOLO") {
+                    socket.emit("achievement", achievementPayload);
+                  } else {
+                    setAchievementToast({ ...achievementPayload, id: `gym-${Date.now()}` });
+                  }
                 }
               } else {
                 setGymBattle(null);
@@ -1034,6 +1132,7 @@ export default function App() {
               playerTeam={currentPlayer.team}
               onSwitchPokemon={(i) => game.updatePlayerLead(currentPlayer.id, i)}
               onEnd={(res) => {
+                sound.stopSfx("battle-start");
                 if (res.playerFinalHp != null && res.enemyFinalHp != null) {
                   game.endPvpBattle(res.playerFinalHp, res.enemyFinalHp);
                 } else {
@@ -1098,6 +1197,58 @@ export default function App() {
           );
         })()}
         {showTeam && currentPlayer && <TeamPanel player={currentPlayer} onClose={() => setShowTeam(false)} onSetLead={(i)=>{ game.updatePlayerLead(currentPlayer.id, i); setShowTeam(false); }} />}
+        {achievementToast && (
+          <AchievementToast
+            key={achievementToast.id}
+            data={achievementToast}
+            onClose={() => setAchievementToast(null)}
+          />
+        )}
+        {showMenu && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center modal-backdrop p-4" onClick={() => setShowMenu(false)}>
+            <div className="card-panel p-4 w-full max-w-xs border-2 border-amber-500/40" onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-center justify-between mb-3">
+                <span className="font-bold text-sm text-amber-300">☰ Menu</span>
+                <button type="button" className="pixel-btn text-xs" onClick={() => setShowMenu(false)}>Close</button>
+              </div>
+              <label className="flex items-center justify-between gap-2 cursor-pointer">
+                <span className="text-xs sm:text-sm text-gray-300">Sound effects</span>
+                <button
+                  type="button"
+                  className={`pixel-btn text-xs min-w-[70px] ${muted ? "opacity-70" : "pixel-btn-primary"}`}
+                  onClick={() => { sound.toggleMute(); setMuted(sound.isMuted()); }}
+                >
+                  {muted ? "Off" : "On"}
+                </button>
+              </label>
+              {!muted && (
+                <button type="button" className="pixel-btn text-xs mt-2 w-full" onClick={() => sound.playSfx("battle-start")}>
+                  Test sound (battle-start.mp3)
+                </button>
+              )}
+              {game.roomCode && (
+                <div className="mt-4 pt-3 border-t border-gray-600/50">
+                  <button
+                    type="button"
+                    className="pixel-btn w-full text-xs text-red-300 border-red-500/50 hover:bg-red-900/30"
+                    onClick={() => {
+                      if (socket && game.roomCode && game.roomCode !== "SOLO") socket.emit("leaveRoom");
+                      game.leaveRoom();
+                      setShowMenu(false);
+                      setGymBattle(null);
+                      setGymVictory(null);
+                      setCityModal(null);
+                      setShowTeam(false);
+                    }}
+                  >
+                    Leave room
+                  </button>
+                </div>
+              )}
+              <p className="text-[10px] text-gray-500 mt-3">Put your .mp3 in <code className="bg-gray-800 px-1 rounded">public/sounds/</code>: battle-start.mp3, capture.mp3, level-up.mp3, evolution.mp3, achievement.mp3</p>
+            </div>
+          </div>
+        )}
         {game.pendingLearn && game.pendingLearn.playerIndex === effectivePlayerIndex && (() => {
           const pl = game.players[game.pendingLearn!.playerIndex];
           const mon = pl?.team[game.pendingLearn!.pokemonIndex];
@@ -1161,25 +1312,25 @@ function HomeScreen({
       <h2 className="text-sm sm:text-lg text-yellow-300 mb-4">Create or join a room</h2>
 
       {isLocalhost && startSingleplayer && (
-        <div className="p-4 bg-amber-900/30 rounded-md border border-amber-600/50">
+        <div className="p-4 card-panel border-2 border-amber-500/50">
           <div className="font-bold text-xs sm:text-sm mb-2 text-amber-300">Singleplayer (localhost)</div>
-          <p className="text-[10px] sm:text-xs text-gray-400 mb-2">Play alone to test the game. No room code needed.</p>
+          <p className="text-[10px] sm:text-xs text-gray-400 mb-3">Play alone to test the game. No room code needed.</p>
           <input
-            className="w-full p-2 text-black text-sm min-h-[44px] mb-2 rounded"
+            className="input-pixel w-full mb-3 text-sm"
             placeholder="Your name"
             value={createName}
             onChange={(e) => setCreateName(e.target.value)}
           />
-          <button className="pixel-btn w-full bg-amber-600 hover:bg-amber-500" onClick={handlePlayAlone}>
+          <button className="pixel-btn pixel-btn-primary w-full" onClick={handlePlayAlone}>
             Play alone
           </button>
         </div>
       )}
 
-      <div className="p-4 bg-gray-800 rounded-md">
-        <div className="font-bold text-xs sm:text-sm mb-2">Create room</div>
+      <div className="p-4 card-panel">
+        <div className="font-bold text-xs sm:text-sm mb-2 text-amber-300">Create room</div>
         <input
-          className="w-full p-2 text-black text-sm min-h-[44px] mb-2 rounded"
+          className="input-pixel w-full mb-3 text-sm"
           placeholder="Your name"
           value={createName}
           onChange={(e) => setCreateName(e.target.value)}
@@ -1190,16 +1341,16 @@ function HomeScreen({
         <p className="text-[10px] text-gray-400 mt-2">You’ll get a code to share with others.</p>
       </div>
 
-      <div className="p-4 bg-gray-800 rounded-md">
-        <div className="font-bold text-xs sm:text-sm mb-2">Join room</div>
+      <div className="p-4 card-panel">
+        <div className="font-bold text-xs sm:text-sm mb-2 text-amber-300">Join room</div>
         <input
-          className="w-full p-2 text-black text-sm min-h-[44px] mb-2 rounded"
+          className="input-pixel w-full mb-2 text-sm"
           placeholder="Room code"
           value={joinCode}
           onChange={(e) => { setJoinCode(e.target.value.toUpperCase()); setJoinError(null); }}
         />
         <input
-          className="w-full p-2 text-black text-sm min-h-[44px] mb-2 rounded"
+          className="input-pixel w-full mb-3 text-sm"
           placeholder="Your name"
           value={joinName}
           onChange={(e) => setJoinName(e.target.value)}
@@ -1213,13 +1364,14 @@ function HomeScreen({
   );
 }
 
-function LobbyScreen({ players, addPlayer, toggleReady, startGame, roomCode, myPlayerId, independentStart }: { players: Player[]; addPlayer: (name: string) => void; toggleReady: (id: string) => void; startGame: () => void; roomCode?: string; myPlayerId?: string; independentStart?: boolean }) {
+function LobbyScreen({ players, addPlayer, toggleReady, startGame, roomCode, myPlayerId, independentStart, onLeaveRoom }: { players: Player[]; addPlayer: (name: string) => void; toggleReady: (id: string) => void; startGame: () => void; roomCode?: string; myPlayerId?: string; independentStart?: boolean; onLeaveRoom?: () => void }) {
   const [name, setName] = useState("");
   const canStart = independentStart ? players.length > 0 : (players.length > 0 && (players.every((p) => p.isReady) || players.length === 1));
   return (
     <div>
-      <div className="mb-3 text-xs sm:text-sm">
-        Lobby
+      <div className="mb-3 text-xs sm:text-sm flex flex-wrap items-start justify-between gap-2">
+        <div>
+          Lobby
         {roomCode && (
           <span className="block mt-1 text-yellow-300">
             {roomCode === "SOLO" ? "Singleplayer" : <>Share code: <strong>{roomCode}</strong></>}
@@ -1228,16 +1380,20 @@ function LobbyScreen({ players, addPlayer, toggleReady, startGame, roomCode, myP
         {independentStart && roomCode && roomCode !== "SOLO" && (
           <p className="text-[10px] text-gray-400 mt-1">Start when you want — you don’t need others to be ready.</p>
         )}
+        </div>
+        {onLeaveRoom && roomCode && (
+          <button type="button" className="pixel-btn text-xs text-red-300 border-red-500/50 hover:bg-red-900/30 flex-shrink-0" onClick={onLeaveRoom}>Leave room</button>
+        )}
       </div>
-      {myPlayerId == null && (
+        {myPlayerId == null && (
         <div className="flex flex-col sm:flex-row gap-2 mb-3">
-          <input className="p-2 text-black text-sm min-h-[44px]" placeholder="Name" value={name} onChange={(e) => setName(e.target.value)} />
+          <input className="input-pixel flex-1 text-sm" placeholder="Name" value={name} onChange={(e) => setName(e.target.value)} />
           <button className="pixel-btn" onClick={() => { if (name.trim()) { addPlayer(name.trim()); setName(""); } }}>Add Player</button>
         </div>
       )}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
         {players.map((p) => (
-          <div key={p.id} className="p-2 bg-gray-800 rounded-md">
+          <div key={p.id} className="card-panel p-3 rounded-lg">
             <div className="text-xs sm:text-sm truncate">{p.name} <span className="text-[10px] sm:text-xs text-gray-300">({p.color})</span></div>
             <div className="mt-2">
               {myPlayerId == null ? (
@@ -1271,10 +1427,15 @@ function LobbyScreen({ players, addPlayer, toggleReady, startGame, roomCode, myP
   );
 }
 
-function StarterSelectScreen({ players, selectStarter, starters, myPlayerId }: { players: Player[]; selectStarter: (playerId: string, starterId: number) => void; starters: any[]; myPlayerId?: string }) {
+function StarterSelectScreen({ players, selectStarter, starters, myPlayerId, onLeaveRoom }: { players: Player[]; selectStarter: (playerId: string, starterId: number) => void; starters: any[]; myPlayerId?: string; onLeaveRoom?: () => void }) {
   return (
     <div>
-      <h2 className="text-sm sm:text-lg text-yellow-300 mb-2">Choose your starter</h2>
+      <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+        <h2 className="text-sm sm:text-lg text-yellow-300">Choose your starter</h2>
+        {onLeaveRoom && (
+          <button type="button" className="pixel-btn text-xs text-red-300 border-red-500/50 hover:bg-red-900/30" onClick={onLeaveRoom}>Leave room</button>
+        )}
+      </div>
       <div className="flex flex-col sm:flex-row gap-4">
         {starters.map((s) => (
           <div key={s.id} className="p-3 bg-gray-800 rounded-md text-center">
@@ -1330,7 +1491,7 @@ function MapScreen({
     <div className="md:flex gap-4">
       <div className="md:w-2/3 space-y-4 min-w-0">
         {/* You are here — current location card */}
-        <div className={`p-3 sm:p-4 rounded-lg border-2 border-yellow-500/60 ${typeInfo.bg} ring-2 ring-yellow-400/30`}>
+        <div className={`card-panel p-3 sm:p-4 border-2 border-amber-500/50 ${typeInfo.bg}`}>
           <div className="flex items-center gap-2 mb-1">
             <span className="text-[10px] sm:text-xs font-bold uppercase tracking-wider text-yellow-300">You are here</span>
             <span className="text-lg sm:text-xl" title={typeInfo.label}>{typeInfo.icon}</span>
@@ -1358,7 +1519,7 @@ function MapScreen({
         </div>
 
         {/* Paths from here — map structure */}
-        <div className="p-3 sm:p-4 bg-gray-800 rounded-lg min-w-0">
+        <div className="card-panel p-3 sm:p-4 min-w-0">
           <div className="flex items-center gap-2 mb-3">
             <span className="text-sm sm:text-base font-bold text-yellow-300">Paths from here</span>
             <span className="text-xs text-gray-400">({connections.length} connection{connections.length !== 1 ? "s" : ""})</span>
@@ -1386,7 +1547,7 @@ function MapScreen({
           <div className="mt-3 pt-3 border-t border-gray-600/50 flex flex-col sm:flex-row gap-2">
             <button className="pixel-btn flex-1 text-xs sm:text-sm bg-gray-600/80" onClick={() => {}}>Stay here</button>
             {loc?.type === "grass" && (
-              <button className="pixel-btn flex-1 text-xs sm:text-sm" onClick={() => searchWild(current.id)}>Search for wild</button>
+              <button className="pixel-btn pixel-btn-primary flex-1 text-xs sm:text-sm" onClick={() => searchWild(current.id)}>🌿 Search for wild</button>
             )}
           </div>
         </div>
@@ -1408,21 +1569,30 @@ function MapScreen({
           </div>
         )}
       </div>
-      <aside className="md:w-1/3 p-3 bg-gray-800 rounded-lg mt-3 md:mt-0 min-w-0 border border-gray-700/50">
+      <aside className="md:w-1/3 p-3 card-panel mt-3 md:mt-0 min-w-0 border border-gray-700/50">
         <div className="text-xs sm:text-sm text-gray-400 mb-1">Playing as</div>
-        <div className="text-sm sm:text-base font-bold text-yellow-300 truncate mb-3">{current.name}</div>
-        <div className="text-[10px] sm:text-xs text-gray-500 mb-2 truncate" title={current.location}>📍 {current.location}</div>
+        <div className="text-sm sm:text-base font-bold text-yellow-300 truncate mb-2">{current.name}</div>
+        <div className="text-[10px] sm:text-xs text-gray-500 mb-3 truncate" title={current.location}>📍 {current.location}</div>
         <div className="text-xs sm:text-sm font-bold text-gray-300 mb-2">Team</div>
         <div className="space-y-2">
-          {current.team.map((pk) => (
-            <div key={pk.id} className="flex items-center gap-2 bg-gray-700/80 p-2 rounded min-w-0">
-              <img src={pk.sprite} className="w-10 h-10 sm:w-12 sm:h-12 flex-shrink-0 rounded" alt={pk.name} />
-              <div className="min-w-0">
-                <div className="text-xs sm:text-sm truncate">{pk.name} Lv{pk.level}</div>
-                <div className="text-[10px] sm:text-xs text-gray-400">HP: {pk.hp}/{pk.maxHp}</div>
+          {current.team.map((pk, idx) => {
+            const maxHp = pk.maxHp ?? 1;
+            const curHp = pk.hp ?? 0;
+            const pct = Math.max(0, (curHp / maxHp) * 100);
+            const hpCol = pct > 60 ? "bg-green-500" : pct > 30 ? "bg-yellow-500" : "bg-red-500";
+            return (
+              <div key={pk.id} className={`flex items-center gap-2 bg-gray-700/80 p-2 rounded-lg min-w-0 border ${idx === 0 ? "border-amber-500/50" : "border-transparent"}`}>
+                <img src={pk.sprite} className="w-10 h-10 sm:w-12 sm:h-12 flex-shrink-0 rounded-lg bg-gray-800" alt={pk.name} />
+                <div className="min-w-0 flex-1">
+                  <div className="text-xs sm:text-sm truncate">{idx === 0 && "★ "}{pk.name} Lv{pk.level}</div>
+                  <div className="h-1.5 hp-bar bg-gray-800 rounded w-full mt-1 max-w-[100px]">
+                    <div className={`hp-bar-fill h-1.5 ${hpCol} rounded`} style={{ width: `${pct}%` }} />
+                  </div>
+                  <div className="text-[10px] text-gray-400">{pk.hp}/{pk.maxHp}</div>
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </aside>
     </div>

@@ -278,8 +278,8 @@ export default function BattleModal({ playerPokemon, enemyPokemon, playerTeam, o
     .filter(({ mon }) => mon.hp > 0 && mon.id !== p.id);
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col bg-black/80 overflow-y-auto p-2 sm:p-4 safe-area-bottom">
-      <div className="bg-gray-900 w-full max-w-2xl mx-auto rounded-md p-3 sm:p-4 text-white flex-1 min-h-0 flex flex-col">
+    <div className="fixed inset-0 z-50 flex flex-col modal-backdrop overflow-y-auto p-2 sm:p-4 safe-area-bottom">
+      <div className="card-panel w-full max-w-2xl mx-auto p-3 sm:p-4 text-white flex-1 min-h-0 flex flex-col border-2 border-amber-500/30">
         {showSwitchPicker ? (
           <div className="flex flex-col flex-1 min-h-0">
             <div className="text-sm sm:text-base font-bold text-yellow-300 mb-2">Your Pokémon fainted. Choose another:</div>
@@ -307,8 +307,8 @@ export default function BattleModal({ playerPokemon, enemyPokemon, playerTeam, o
             <div className="min-w-0 flex-1">
               <div className="text-xs sm:text-sm text-gray-300">You</div>
               <div className="font-bold text-xs sm:text-base truncate">{p.name} Lv {p.level}</div>
-              <div className="w-full max-w-40 h-2.5 sm:h-3 bg-gray-700 rounded mt-1">
-                <div className={`${hpColor(p.hp, p.maxHp)} h-2.5 sm:h-3 rounded transition-all`} style={{ width: `${Math.max(0, (p.hp / p.maxHp) * 100)}%` }}></div>
+              <div className="w-full max-w-40 h-2.5 sm:h-3 hp-bar bg-gray-700 mt-1">
+                <div className={`hp-bar-fill ${hpColor(p.hp, p.maxHp)} h-2.5 sm:h-3`} style={{ width: `${Math.max(0, (p.hp / p.maxHp) * 100)}%` }} />
               </div>
               <div className="text-[10px] sm:text-xs mt-0.5">{p.hp}/{p.maxHp}</div>
             </div>
@@ -318,8 +318,8 @@ export default function BattleModal({ playerPokemon, enemyPokemon, playerTeam, o
             <div className="min-w-0 flex-1 sm:text-right">
               <div className="text-xs sm:text-sm text-gray-300">Enemy</div>
               <div className="font-bold text-xs sm:text-base truncate">{e.name} Lv {e.level}</div>
-              <div className="w-full max-w-40 h-2.5 sm:h-3 bg-gray-700 rounded mt-1 ml-auto sm:ml-0">
-                <div className={`${hpColor(e.hp, e.maxHp)} h-2.5 sm:h-3 rounded transition-all`} style={{ width: `${Math.max(0, (e.hp / e.maxHp) * 100)}%` }}></div>
+              <div className="w-full max-w-40 h-2.5 sm:h-3 hp-bar bg-gray-700 mt-1 ml-auto sm:ml-0">
+                <div className={`hp-bar-fill ${hpColor(e.hp, e.maxHp)} h-2.5 sm:h-3`} style={{ width: `${Math.max(0, (e.hp / e.maxHp) * 100)}%` }} />
               </div>
               <div className="text-[10px] sm:text-xs mt-0.5">{e.hp}/{e.maxHp}</div>
             </div>
@@ -329,7 +329,7 @@ export default function BattleModal({ playerPokemon, enemyPokemon, playerTeam, o
         <div className="mt-3 sm:mt-4 flex-shrink-0">
           {!showMoves ? (
             <div className={`grid gap-2 ${(isPvP || isTrainerBattle) ? "grid-cols-2" : "grid-cols-2 sm:grid-cols-2"}`}>
-              <button className="pixel-btn w-full" onClick={() => setShowMoves(true)} disabled={busy}>Attack</button>
+              <button className="pixel-btn pixel-btn-primary w-full" onClick={() => setShowMoves(true)} disabled={busy}>⚔ Attack</button>
               <button className="pixel-btn w-full" onClick={run} disabled={busy}>{(isPvP || isTrainerBattle) ? "Forfeit" : "Run"}</button>
               {!(isPvP || isTrainerBattle) && <button className="pixel-btn w-full col-span-2 sm:col-span-1" onClick={async () => {
                 if (!onCapture) return;
@@ -405,10 +405,12 @@ export default function BattleModal({ playerPokemon, enemyPokemon, playerTeam, o
           )}
         </div>
 
-        <div className="mt-3 sm:mt-4 bg-black/40 p-2 rounded flex-1 min-h-0 flex flex-col">
-          <div className="text-xs text-gray-300 mb-2 flex-shrink-0">Battle Log</div>
-          <div className="h-20 sm:h-28 overflow-y-auto text-[10px] sm:text-sm flex-1 min-h-0">
-            {log.map((l, i) => <div key={i} className="mb-1 break-words">{l}</div>)}
+        <div className="mt-3 sm:mt-4 bg-black/40 p-3 rounded-lg border border-gray-600/50 flex-1 min-h-0 flex flex-col">
+          <div className="text-xs font-bold text-amber-300/90 mb-2 flex-shrink-0">Battle Log</div>
+          <div className="h-20 sm:h-28 overflow-y-auto text-[10px] sm:text-sm flex-1 min-h-0 space-y-1">
+            {log.map((l, i) => (
+              <div key={i} className="break-words py-0.5 px-1 rounded odd:bg-gray-800/50">{l}</div>
+            ))}
           </div>
         </div>
         </>

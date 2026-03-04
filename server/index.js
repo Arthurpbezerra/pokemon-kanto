@@ -99,6 +99,25 @@ io.on("connection", (socket) => {
     socket.to(roomCode).emit("state", state);
   });
 
+  socket.on("achievement", (data) => {
+    const roomCode = socket.roomCode;
+    if (!roomCode || !rooms.has(roomCode)) return;
+    io.to(roomCode).emit("achievement", { ...data, ts: Date.now() });
+  });
+
+  socket.on("leaveRoom", () => {
+    const roomCode = socket.roomCode;
+    if (!roomCode) return;
+    socket.leave(roomCode);
+    socket.roomCode = null;
+    if (rooms.has(roomCode)) {
+      const state = rooms.get(roomCode);
+      state.players = state.players.filter((p) => p.id !== socket.id);
+      if (state.players.length === 0) rooms.delete(roomCode);
+      else io.to(roomCode).emit("state", state);
+    }
+  });
+
   socket.on("disconnect", () => {
     const roomCode = socket.roomCode;
     if (roomCode && rooms.has(roomCode)) {
