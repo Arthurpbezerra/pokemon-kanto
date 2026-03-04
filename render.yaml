@@ -1,12 +1,11 @@
 # Deploy do servidor multiplayer no Render (https://render.com)
-# No Render: Dashboard → New → Blueprint → conecte este repo. O serviço será criado.
-# Depois, em GitHub → Settings → Secrets → Actions: crie VITE_WS_URL com a URL do serviço (ex: https://pokemon-kanto-xxxx.onrender.com)
+# No Render: crie o serviço e em "Root Directory" (Build & Deploy) coloque: server
+# Depois, GitHub → Settings → Secrets → Actions: crie VITE_WS_URL com a URL do serviço
 
 services:
   - type: web
     name: pokemon-kanto-server
     runtime: node
-    rootDirectory: server
     buildCommand: npm install
     startCommand: npm start
     envVars:
