@@ -30,7 +30,8 @@ jobs:
       - name: Build
         run: npm run build
         env:
-          VITE_BASE_PATH: /${{ github.event.repository.name }}/
+          # Obrigatório: GitHub Pages serve em /<repo>/
+          VITE_BASE_PATH: "/${{ github.event.repository.name }}/"
 
       - name: Deploy to gh-pages
         uses: peaceiris/actions-gh-pages@v4
