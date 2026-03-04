@@ -45,7 +45,7 @@ export type GameStateSnapshot = {
   roomCode: string;
   players: Player[];
   currentPlayerIndex: number;
-  wildEncounter: null | { pokemon: Pokemon; location: string };
+  wildEncounter: null | { pokemon: Pokemon; location: string; triggeredByPlayerId?: string };
   encounterLog: string[];
   pendingLearn: null | { playerIndex: number; pokemonIndex: number; newMove: string; newLevel: number };
   evolutionNotice: null | { playerIndex: number; oldName: string; newName: string };
@@ -107,7 +107,7 @@ function useGameState(socket: Socket | null) {
   const [roomCode, setRoomCode] = useState("");
   const [players, setPlayers] = useState<Player[]>([]);
   const [currentPlayerIndex, setCurrentPlayerIndex] = useState(0);
-  const [wildEncounter, setWildEncounter] = useState<null | { pokemon: Pokemon; location: string }>(null);
+  const [wildEncounter, setWildEncounter] = useState<null | { pokemon: Pokemon; location: string; triggeredByPlayerId?: string }>(null);
   const [encounterLog, setEncounterLog] = useState<string[]>([]);
   const [pendingLearn, setPendingLearn] = useState<null | { playerIndex: number; pokemonIndex: number; newMove: string; newLevel: number }>(null);
   const [evolutionNotice, setEvolutionNotice] = useState<null | { playerIndex: number; oldName: string; newName: string }>(null);
@@ -216,7 +216,7 @@ function useGameState(socket: Socket | null) {
       getPokemonTemplate(pid).then((tpl) => {
         const lvl = Math.max(3, Math.floor(Math.random() * 5) + 3);
         const inst = makeInstanceFromTemplate(tpl, lvl);
-        setWildEncounter({ pokemon: inst, location: to });
+        setWildEncounter({ pokemon: inst, location: to, triggeredByPlayerId: playerId });
         setTimeout(() => setPhase("battle"), 50);
       }).catch(() => {});
     }
@@ -231,24 +231,21 @@ function useGameState(socket: Socket | null) {
     getPokemonTemplate(pid).then((tpl) => {
       const lvl = Math.max(3, Math.floor(Math.random() * 5) + 3);
       const inst = makeInstanceFromTemplate(tpl, lvl);
-      setWildEncounter({ pokemon: inst, location: pl.location });
+      setWildEncounter({ pokemon: inst, location: pl.location, triggeredByPlayerId: playerId });
       setTimeout(() => setPhase("battle"), 50);
     }).catch(() => {});
   };
 
-  const captureAttempt = (chance = 0.8) => {
-    console.log("captureAttempt called, chance=", chance, "wildEncounter=", wildEncounter);
+  const captureAttempt = (chance = 0.8, forPlayerId?: string) => {
     if (!wildEncounter) return false;
+    const idx = forPlayerId != null ? players.findIndex((p) => p.id === forPlayerId) : currentPlayerIndex;
+    if (idx < 0) return false;
     const ok = Math.random() < chance;
     if (ok) {
       setPlayers((ps) =>
-        ps.map((pl, idx) =>
-          idx === currentPlayerIndex ? { ...pl, team: [...pl.team, wildEncounter.pokemon] } : pl
-        )
+        ps.map((pl, i) => (i === idx ? { ...pl, team: [...pl.team, wildEncounter.pokemon] } : pl))
       );
-      // clear wildEncounter and let caller close the battle
       setWildEncounter(null);
-      console.log("capture success: added to team", wildEncounter.pokemon);
     }
     return ok;
   };
@@ -489,8 +486,22 @@ function useGameState(socket: Socket | null) {
     }, 500);
   };
 
-  const updatePlayerLead = (playerId: string, newLead: Pokemon) => {
-    setPlayers((ps) => ps.map((pl) => (pl.id === playerId ? { ...pl, team: [newLead, ...pl.team.slice(1)] } : pl)));
+  const updatePlayerLead = (playerId: string, leadIndex: number) => {
+    setPlayers((ps) =>
+      ps.map((pl) => {
+        if (pl.id !== playerId || !pl.team.length) return pl;
+        const idx = Math.max(0, Math.min(leadIndex, pl.team.length - 1));
+        const newLead = pl.team[idx];
+        const rest = pl.team.filter((_, i) => i !== idx);
+        return { ...pl, team: [newLead, ...rest] };
+      })
+    );
+  };
+
+  const updateLeadPokemon = (playerId: string, updatedMon: Pokemon) => {
+    setPlayers((ps) =>
+      ps.map((pl) => (pl.id === playerId && pl.team.length > 0 ? { ...pl, team: [updatedMon, ...pl.team.slice(1)] } : pl))
+    );
   };
 
   const healPlayer = (playerId: string) => {
@@ -545,6 +556,7 @@ function useGameState(socket: Socket | null) {
     setWildEncounter,
     captureAttempt,
     updatePlayerLead,
+    updateLeadPokemon,
     healPlayer,
     searchWild,
     pendingLearn,
@@ -580,12 +592,25 @@ export default function App() {
     }).catch(() => {});
   }, []);
 
+  const isMultiplayer = Boolean(game.roomCode && socket);
+  const myPlayerIndex = isMultiplayer && socket
+    ? game.players.findIndex((p) => p.id === socket.id)
+    : -1;
+  const effectivePlayerIndex = isMultiplayer && myPlayerIndex >= 0 ? myPlayerIndex : game.currentPlayerIndex;
+  const currentPlayer = game.players[effectivePlayerIndex];
+
   return (
     <div className="min-h-screen p-3 sm:p-4 pb-0">
       <header className="mb-3 sm:mb-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
         <h1 className="text-sm sm:text-xl text-yellow-300 truncate">Pokémon Kanto</h1>
         {game.phase !== "home" && (
-          <div className="text-xs sm:text-sm text-gray-300">Room: {game.roomCode || "—"}</div>
+          <div className="text-xs sm:text-sm text-gray-300">
+            {isMultiplayer && currentPlayer ? (
+              <>You: <strong>{currentPlayer.name}</strong></>
+            ) : (
+              <>Room: {game.roomCode || "—"}</>
+            )}
+          </div>
         )}
       </header>
 
@@ -598,10 +623,13 @@ export default function App() {
           />
         )}
 
-        {game.phase !== "home" && game.players.length > 0 && (
+        {game.phase !== "home" && game.players.length > 0 && !isMultiplayer && (
           <div className="mb-4">
             <PlayerSwitcher players={game.players} current={game.currentPlayerIndex} setCurrent={game.setCurrentPlayerIndex} />
           </div>
+        )}
+        {game.phase !== "home" && isMultiplayer && currentPlayer && (
+          <div className="mb-2 text-xs text-gray-400">Playing as <strong className="text-yellow-300">{currentPlayer.name}</strong></div>
         )}
 
         {game.phase === "lobby" && (
@@ -611,17 +639,23 @@ export default function App() {
             toggleReady={game.toggleReady}
             startGame={game.startGameIfReady}
             roomCode={game.roomCode}
+            myPlayerId={isMultiplayer ? currentPlayer?.id : undefined}
           />
         )}
 
         {game.phase === "starter" && starters && (
-          <StarterSelectScreen players={game.players} selectStarter={game.selectStarter} starters={starters} />
+          <StarterSelectScreen
+            players={game.players}
+            selectStarter={game.selectStarter}
+            starters={starters}
+            myPlayerId={isMultiplayer ? currentPlayer?.id : undefined}
+          />
         )}
 
         {game.phase === "map" && (
           <MapScreen
             players={game.players}
-            currentPlayerIndex={game.currentPlayerIndex}
+            currentPlayerIndex={effectivePlayerIndex}
             movePlayer={(playerId: string, to: string) => {
               game.movePlayer(playerId, to);
               const loc = LOCATIONS[to];
@@ -639,7 +673,7 @@ export default function App() {
             description={cityModal.description}
             gym={cityModal.gym}
             onClose={() => setCityModal(null)}
-            onHeal={() => game.healPlayer(game.players[game.currentPlayerIndex].id)}
+            onHeal={() => game.healPlayer(currentPlayer?.id ?? "")}
             onChallenge={() => {
               // start gym battle: build leader team based on gym key
               const leaderKey = cityModal!.gym!;
@@ -663,7 +697,7 @@ export default function App() {
           />
         )}
 
-        {game.evolutionNotice && (
+        {game.evolutionNotice && game.evolutionNotice.playerIndex === effectivePlayerIndex && (
           <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-3 sm:p-4">
             <div className="bg-gray-900 p-4 rounded-md text-white w-full max-w-sm">
               <div className="font-bold mb-2 text-xs sm:text-base">Evolution!</div>
@@ -673,65 +707,52 @@ export default function App() {
           </div>
         )}
 
-        {game.phase === "battle" && game.wildEncounter && (
+        {game.phase === "battle" && game.wildEncounter && (!game.wildEncounter.triggeredByPlayerId || game.wildEncounter.triggeredByPlayerId === socket?.id) && currentPlayer && (
           <BattleModal
-            playerPokemon={game.players[game.currentPlayerIndex].team[0]}
+            playerPokemon={currentPlayer.team[0]}
             enemyPokemon={game.wildEncounter.pokemon}
             onEnd={(res) => {
               game.setPhase("map");
               game.setWildEncounter(null);
-              if (res.winner === "player") {
-                const idx = game.currentPlayerIndex;
-                const lead = game.players[idx]?.team[0];
+              if (res.winner === "player" && currentPlayer) {
+                const lead = currentPlayer.team[0];
                 const grant = game.grantXpToLead;
-                // Grant exactly enough XP to level up once (speed up gameplay)
                 const xpToNext = lead?.xpToNext ?? 40;
                 const currentXp = lead?.xp ?? 0;
                 const xpNeeded = Math.max(1, xpToNext - currentXp);
-                setTimeout(() => grant(idx, xpNeeded), 0);
+                setTimeout(() => grant(effectivePlayerIndex, xpNeeded), 0);
               }
             }}
             onPlayerUpdate={(p) => {
-              // update player's lead
-              const pid = game.players[game.currentPlayerIndex].id;
-              game.updatePlayerLead(pid, p);
+              if (currentPlayer) game.updateLeadPokemon(currentPlayer.id, p);
             }}
             onCapture={(ultra) => {
-              if (!game.wildEncounter) return false;
-              if (ultra) {
-                // guaranteed
-                return game.captureAttempt(1);
-              }
+              if (!game.wildEncounter || !currentPlayer) return false;
+              if (ultra) return game.captureAttempt(1, currentPlayer.id);
               const we = game.wildEncounter.pokemon;
               const hpFactor = 1 - (we.hp / we.maxHp);
-              const base = 0.5;
-              const chance = Math.min(0.95, base + hpFactor * 0.6);
+              const chance = Math.min(0.95, 0.5 + hpFactor * 0.6);
               const ok = Math.random() < chance;
               if (ok) {
-                const captured = game.captureAttempt(1);
-                if (captured) {
-                  // give small XP for capturing
-                  game.grantXpToLead(game.currentPlayerIndex, Math.max(1, (we.level ?? 1) * 5));
-                }
+                const captured = game.captureAttempt(1, currentPlayer.id);
+                if (captured) game.grantXpToLead(effectivePlayerIndex, Math.max(1, (we.level ?? 1) * 5));
                 return captured;
-              } else {
-                // failed capture: BattleModal will handle enemy turn; just return false
-                return false;
               }
+              return false;
             }}
-            onGrantXp={(xp: number) => game.grantXpToLead(game.currentPlayerIndex, xp)}
+            onGrantXp={(xp: number) => game.grantXpToLead(effectivePlayerIndex, xp)}
           />
         )}
-        {showTeam && <TeamPanel player={game.players[game.currentPlayerIndex]} onClose={() => setShowTeam(false)} onSetLead={(i)=>{ const pid = game.players[game.currentPlayerIndex].id; const mon = game.players[game.currentPlayerIndex].team[i]; if(mon) game.updatePlayerLead(pid, mon); setShowTeam(false); }} />}
-        {game.pendingLearn && (() => {
-          const pl = game.players[game.pendingLearn.playerIndex];
-          const mon = pl?.team[game.pendingLearn.pokemonIndex];
+        {showTeam && currentPlayer && <TeamPanel player={currentPlayer} onClose={() => setShowTeam(false)} onSetLead={(i)=>{ game.updatePlayerLead(currentPlayer.id, i); setShowTeam(false); }} />}
+        {game.pendingLearn && game.pendingLearn.playerIndex === effectivePlayerIndex && (() => {
+          const pl = game.players[game.pendingLearn!.playerIndex];
+          const mon = pl?.team[game.pendingLearn!.pokemonIndex];
           if (!mon) return null;
-          return <LearnMoveModal pokemonName={mon.name} currentMoves={mon.moves ?? []} newMove={game.pendingLearn.newMove} onReplace={(i:number)=>{ game.finalizeLearn(i); }} onSkip={()=>{ game.finalizeLearn(null); }} />;
+          return <LearnMoveModal pokemonName={mon.name} currentMoves={mon.moves ?? []} newMove={game.pendingLearn!.newMove} onReplace={(i:number)=>{ game.finalizeLearn(i); }} onSkip={()=>{ game.finalizeLearn(null); }} />;
         })()}
       </main>
       {game.phase !== "home" && (
-        <BottomNav onSearch={() => { game.searchWild(game.players[game.currentPlayerIndex]?.id ?? ""); }} onTeam={() => setShowTeam(true)} onMap={() => game.setPhase("map")} onMenu={() => setShowMenu((s)=>!s)} />
+        <BottomNav onSearch={() => { game.searchWild(currentPlayer?.id ?? ""); }} onTeam={() => setShowTeam(true)} onMap={() => game.setPhase("map")} onMenu={() => setShowMenu((s)=>!s)} />
       )}
     </div>
   );
@@ -814,7 +835,7 @@ function HomeScreen({
   );
 }
 
-function LobbyScreen({ players, addPlayer, toggleReady, startGame, roomCode }: { players: Player[]; addPlayer: (name: string) => void; toggleReady: (id: string) => void; startGame: () => void; roomCode?: string }) {
+function LobbyScreen({ players, addPlayer, toggleReady, startGame, roomCode, myPlayerId }: { players: Player[]; addPlayer: (name: string) => void; toggleReady: (id: string) => void; startGame: () => void; roomCode?: string; myPlayerId?: string }) {
   const [name, setName] = useState("");
   return (
     <div>
@@ -822,16 +843,24 @@ function LobbyScreen({ players, addPlayer, toggleReady, startGame, roomCode }: {
         Lobby
         {roomCode && <span className="block mt-1 text-yellow-300">Share code: <strong>{roomCode}</strong></span>}
       </div>
-      <div className="flex flex-col sm:flex-row gap-2 mb-3">
-        <input className="p-2 text-black text-sm min-h-[44px]" placeholder="Name" value={name} onChange={(e) => setName(e.target.value)} />
-        <button className="pixel-btn" onClick={() => { if (name.trim()) { addPlayer(name.trim()); setName(""); } }}>Add Player</button>
-      </div>
+      {myPlayerId == null && (
+        <div className="flex flex-col sm:flex-row gap-2 mb-3">
+          <input className="p-2 text-black text-sm min-h-[44px]" placeholder="Name" value={name} onChange={(e) => setName(e.target.value)} />
+          <button className="pixel-btn" onClick={() => { if (name.trim()) { addPlayer(name.trim()); setName(""); } }}>Add Player</button>
+        </div>
+      )}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
         {players.map((p) => (
           <div key={p.id} className="p-2 bg-gray-800 rounded-md">
             <div className="text-xs sm:text-sm truncate">{p.name} <span className="text-[10px] sm:text-xs text-gray-300">({p.color})</span></div>
             <div className="mt-2">
-              <button className="pixel-btn w-full sm:w-auto" onClick={() => toggleReady(p.id)}>{p.isReady ? "UNREADY" : "READY"}</button>
+              {myPlayerId == null ? (
+                <button className="pixel-btn w-full sm:w-auto" onClick={() => toggleReady(p.id)}>{p.isReady ? "UNREADY" : "READY"}</button>
+              ) : p.id === myPlayerId ? (
+                <button className="pixel-btn w-full sm:w-auto" onClick={() => toggleReady(p.id)}>{p.isReady ? "UNREADY" : "READY"}</button>
+              ) : (
+                <span className="text-xs text-gray-400">{p.isReady ? "Ready" : "Not ready"}</span>
+              )}
             </div>
           </div>
         ))}
@@ -856,7 +885,7 @@ function LobbyScreen({ players, addPlayer, toggleReady, startGame, roomCode }: {
   );
 }
 
-function StarterSelectScreen({ players, selectStarter, starters }: { players: Player[]; selectStarter: (playerId: string, starterId: number) => void; starters: any[] }) {
+function StarterSelectScreen({ players, selectStarter, starters, myPlayerId }: { players: Player[]; selectStarter: (playerId: string, starterId: number) => void; starters: any[]; myPlayerId?: string }) {
   return (
     <div>
       <h2 className="text-sm sm:text-lg text-yellow-300 mb-2">Choose your starter</h2>
@@ -866,9 +895,13 @@ function StarterSelectScreen({ players, selectStarter, starters }: { players: Pl
             <img src={s.sprite} alt={s.name} className="w-20 h-20 sm:w-24 sm:h-24 mx-auto" />
             <div className="mt-2 text-xs sm:text-base">{s.name}</div>
             <div className="mt-2 flex flex-col sm:flex-row sm:flex-wrap gap-2">
-              {players.map((p) => (
-                <button key={p.id} className="pixel-btn w-full sm:w-auto" onClick={() => selectStarter(p.id, s.id)}>Pick as {p.name}</button>
-              ))}
+              {myPlayerId != null ? (
+                <button className="pixel-btn w-full" onClick={() => selectStarter(myPlayerId, s.id)}>Pick</button>
+              ) : (
+                players.map((p) => (
+                  <button key={p.id} className="pixel-btn w-full sm:w-auto" onClick={() => selectStarter(p.id, s.id)}>Pick as {p.name}</button>
+                ))
+              )}
             </div>
           </div>
         ))}
