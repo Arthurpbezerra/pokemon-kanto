@@ -15,21 +15,28 @@ type PokemonInstance = {
   xpToNext?: number;
 };
 
+export type BattleEndResult = { winner: "player" | "enemy" | "run"; xpGain?: number; playerFinalHp?: number; enemyFinalHp?: number };
+
 type Props = {
   playerPokemon: PokemonInstance;
   enemyPokemon: PokemonInstance;
-  onEnd: (result: { winner: "player" | "enemy" | "run"; xpGain?: number }) => void;
+  playerTeam?: PokemonInstance[];
+  onEnd: (result: BattleEndResult) => void;
   onPlayerUpdate: (p: PokemonInstance) => void;
+  onSwitchPokemon?: (teamIndex: number) => void;
   onCapture?: (guaranteed?: boolean) => void;
   onGrantXp?: (xp: number) => void;
+  isPvP?: boolean;
 };
 
-export default function BattleModal({ playerPokemon, enemyPokemon, onEnd, onPlayerUpdate, onCapture }: Props) {
+export default function BattleModal({ playerPokemon, enemyPokemon, playerTeam, onEnd, onPlayerUpdate, onSwitchPokemon, onCapture, isPvP }: Props) {
   const [p, setP] = useState<PokemonInstance>(() => ({ ...playerPokemon }));
   const [e, setE] = useState<PokemonInstance>(() => ({ ...enemyPokemon }));
   const [showMoves, setShowMoves] = useState(false);
   const [log, setLog] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
+  const [showSwitchPicker, setShowSwitchPicker] = useState(false);
+  const [faintedLeadId, setFaintedLeadId] = useState<number | null>(null);
 
   // Do NOT sync from props after mount: parent's enemyPokemon always has full HP.
   // Resyncing would overwrite local battle damage and make the enemy "heal" on every parent re-render.
@@ -38,6 +45,15 @@ export default function BattleModal({ playerPokemon, enemyPokemon, onEnd, onPlay
   useEffect(() => {
     setLog([]);
   }, []);
+
+  // When parent switches lead after we chose another Pokémon, update local player state
+  useEffect(() => {
+    if (showSwitchPicker && faintedLeadId !== null && playerPokemon.id !== faintedLeadId) {
+      setP({ ...playerPokemon });
+      setShowSwitchPicker(false);
+      setFaintedLeadId(null);
+    }
+  }, [showSwitchPicker, faintedLeadId, playerPokemon]);
 
   const pushLog = (line: string) =>
     setLog((l) => {
@@ -204,18 +220,27 @@ export default function BattleModal({ playerPokemon, enemyPokemon, onEnd, onPlay
 
     if ((finalE && finalE.hp <= 0) || (e.hp <= 0)) {
       pushLog(`${e.name} fainted!`);
-      const xpGain = xpForDefeatingEnemy(e.level ?? 1);
+      const xpGain = isPvP ? undefined : xpForDefeatingEnemy(e.level ?? 1);
+      const playerHp = (finalP ?? p).hp;
+      const enemyHp = (finalE ?? e).hp;
       setBusy(false);
-      // Close battle first so UI doesn't freeze; parent will grant XP in next tick.
-      onEnd({ winner: "player", xpGain });
+      onEnd({ winner: "player", xpGain, ...(isPvP && { playerFinalHp: playerHp, enemyFinalHp: Math.max(0, enemyHp) }) });
       return;
     }
 
     if ((finalP && finalP.hp <= 0) || (p.hp <= 0)) {
       pushLog(`${p.name} fainted!`);
-      try { onPlayerUpdate(p); } catch {}
+      try { onPlayerUpdate(finalP ?? p); } catch {}
+      const playerHp = (finalP ?? p).hp;
+      const enemyHp = (finalE ?? e).hp;
       setBusy(false);
-      onEnd({ winner: "enemy" });
+      const canSwitch = playerTeam && onSwitchPokemon && playerTeam.some((m) => m.hp > 0 && m.id !== (finalP ?? p).id);
+      if (canSwitch) {
+        setFaintedLeadId((finalP ?? p).id);
+        setShowSwitchPicker(true);
+        return;
+      }
+      onEnd({ winner: "enemy", ...(isPvP && { playerFinalHp: Math.max(0, playerHp), enemyFinalHp: enemyHp }) });
       return;
     }
 
@@ -223,9 +248,9 @@ export default function BattleModal({ playerPokemon, enemyPokemon, onEnd, onPlay
   };
 
   const run = () => {
-    pushLog("You ran away!");
+    pushLog(isPvP ? "You forfeited!" : "You ran away!");
     try { onPlayerUpdate(p); } catch {}
-    onEnd({ winner: "run" });
+    onEnd({ winner: "run", ...(isPvP && { playerFinalHp: p.hp, enemyFinalHp: e.hp }) });
   };
 
   const hpColor = (cur: number, max: number) => {
@@ -235,9 +260,34 @@ export default function BattleModal({ playerPokemon, enemyPokemon, onEnd, onPlay
     return "bg-red-500";
   };
 
+  const switchOptions = (playerTeam ?? [])
+    .map((m, i) => ({ mon: m, teamIndex: i }))
+    .filter(({ mon }) => mon.hp > 0 && mon.id !== p.id);
+
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-black/80 overflow-y-auto p-2 sm:p-4 safe-area-bottom">
       <div className="bg-gray-900 w-full max-w-2xl mx-auto rounded-md p-3 sm:p-4 text-white flex-1 min-h-0 flex flex-col">
+        {showSwitchPicker ? (
+          <div className="flex flex-col flex-1 min-h-0">
+            <div className="text-sm sm:text-base font-bold text-yellow-300 mb-2">Your Pokémon fainted. Choose another:</div>
+            <div className="grid grid-cols-2 sm:grid-cols-2 gap-2 flex-1 content-start">
+              {switchOptions.map(({ mon, teamIndex }) => (
+                <button
+                  key={teamIndex}
+                  className="flex items-center gap-2 p-2 rounded bg-gray-700 hover:bg-gray-600 pixel-btn text-left"
+                  onClick={() => onSwitchPokemon?.(teamIndex)}
+                >
+                  <img src={mon.sprite} className="w-12 h-12 flex-shrink-0" alt={mon.name} />
+                  <div className="min-w-0">
+                    <div className="font-bold text-xs sm:text-sm truncate">{mon.name}</div>
+                    <div className="text-[10px] sm:text-xs">Lv{mon.level} HP {mon.hp}/{mon.maxHp}</div>
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : (
+        <>
         <div className="flex flex-col sm:flex-row sm:justify-between gap-3 sm:gap-4 flex-shrink-0">
           <div className="flex items-center gap-2 sm:gap-3">
             <img src={p.sprite} alt={p.name} className="w-16 h-16 sm:w-20 sm:h-20 flex-shrink-0" />
@@ -265,10 +315,10 @@ export default function BattleModal({ playerPokemon, enemyPokemon, onEnd, onPlay
 
         <div className="mt-3 sm:mt-4 flex-shrink-0">
           {!showMoves ? (
-            <div className="grid grid-cols-2 sm:grid-cols-2 gap-2">
+            <div className={`grid gap-2 ${isPvP ? "grid-cols-2" : "grid-cols-2 sm:grid-cols-2"}`}>
               <button className="pixel-btn w-full" onClick={() => setShowMoves(true)} disabled={busy}>Attack</button>
-              <button className="pixel-btn w-full" onClick={run} disabled={busy}>Run</button>
-              <button className="pixel-btn w-full col-span-2 sm:col-span-1" onClick={async () => {
+              <button className="pixel-btn w-full" onClick={run} disabled={busy}>{isPvP ? "Forfeit" : "Run"}</button>
+              {!isPvP && <button className="pixel-btn w-full col-span-2 sm:col-span-1" onClick={async () => {
                 if (!onCapture) return;
                 if (busy) return;
                 setBusy(true);
@@ -308,8 +358,8 @@ export default function BattleModal({ playerPokemon, enemyPokemon, onEnd, onPlay
                 } finally {
                   setBusy(false);
                 }
-              }} disabled={busy}>Capture</button>
-              <button className="pixel-btn w-full" onClick={async () => {
+              }} disabled={busy}>Capture</button>}
+              {!isPvP && <button className="pixel-btn w-full" onClick={async () => {
                 if (!onCapture) return;
                 if (busy) return;
                 setBusy(true);
@@ -330,7 +380,7 @@ export default function BattleModal({ playerPokemon, enemyPokemon, onEnd, onPlay
                 } finally {
                   setBusy(false);
                 }
-              }} disabled={busy}>Ultra Ball</button>
+              }} disabled={busy}>Ultra Ball</button>}
             </div>
           ) : (
             <div className="grid grid-cols-2 gap-2">
@@ -348,6 +398,8 @@ export default function BattleModal({ playerPokemon, enemyPokemon, onEnd, onPlay
             {log.map((l, i) => <div key={i} className="mb-1 break-words">{l}</div>)}
           </div>
         </div>
+        </>
+        )}
       </div>
     </div>
   );

@@ -40,6 +40,10 @@ type Phase = "home" | "lobby" | "starter" | "map" | "encounter" | "battle";
 const generateCode = () =>
   Math.random().toString(36).slice(2, 8).toUpperCase();
 
+export type PvpRequest = { fromPlayerId: string; toPlayerId: string; type: "battle" | "trade" };
+export type PvpBattle = { challengerId: string; defenderId: string };
+export type PvpTrade = { playerAId: string; playerBId: string; aSelectedIndex: number | null; bSelectedIndex: number | null };
+
 export type GameStateSnapshot = {
   phase: Phase;
   roomCode: string;
@@ -49,6 +53,9 @@ export type GameStateSnapshot = {
   encounterLog: string[];
   pendingLearn: null | { playerIndex: number; pokemonIndex: number; newMove: string; newLevel: number };
   evolutionNotice: null | { playerIndex: number; oldName: string; newName: string };
+  pvpRequest: PvpRequest | null;
+  pvpBattle: PvpBattle | null;
+  pvpTrade: PvpTrade | null;
 };
 
 const STARTER_IDS = [1, 4, 7];
@@ -92,6 +99,24 @@ const LOCATIONS: Record<string, { type: "town" | "grass" | "water" | "cave"; con
   "Indigo Plateau": { type: "town", connections: ["Viridian Gym"], gym: null, x: 28, y: 10 }
 };
 
+const GYM_LEADER_SPRITES: Record<string, string> = {
+  "Brock": "https://play.pokemonshowdown.com/sprites/trainers/gen1/brock.png",
+  "Misty": "https://play.pokemonshowdown.com/sprites/trainers/gen1/misty.png",
+  "Lt. Surge": "https://play.pokemonshowdown.com/sprites/trainers/gen1/surge.png",
+  "Erika": "https://play.pokemonshowdown.com/sprites/trainers/gen1/erika.png",
+  "Koga": "https://play.pokemonshowdown.com/sprites/trainers/gen1/koga.png",
+  "Sabrina": "https://play.pokemonshowdown.com/sprites/trainers/gen1/sabrina.png",
+  "Blaine": "https://play.pokemonshowdown.com/sprites/trainers/gen1/blaine.png",
+  "Giovanni": "https://play.pokemonshowdown.com/sprites/trainers/gen1/giovanni.png"
+};
+
+const LOCATION_TYPE_LABELS: Record<string, { icon: string; label: string; bg: string }> = {
+  town: { icon: "🏠", label: "City", bg: "bg-amber-900/50" },
+  grass: { icon: "🌿", label: "Route", bg: "bg-green-900/50" },
+  water: { icon: "🌊", label: "Water", bg: "bg-blue-900/50" },
+  cave: { icon: "⛰", label: "Cave", bg: "bg-stone-700/50" }
+};
+
 // Layout rows for grid rendering (rows of location names)
 const MAP_ROWS: string[][] = [
   ["Indigo Plateau", "Pewter City", "Cerulean City", "Lavender Town"],
@@ -112,6 +137,9 @@ function useGameState(socket: Socket | null) {
   const [pendingLearn, setPendingLearn] = useState<null | { playerIndex: number; pokemonIndex: number; newMove: string; newLevel: number }>(null);
   const [evolutionNotice, setEvolutionNotice] = useState<null | { playerIndex: number; oldName: string; newName: string }>(null);
   const [joinError, setJoinError] = useState<string | null>(null);
+  const [pvpRequest, setPvpRequest] = useState<PvpRequest | null>(null);
+  const [pvpBattle, setPvpBattle] = useState<PvpBattle | null>(null);
+  const [pvpTrade, setPvpTrade] = useState<PvpTrade | null>(null);
   const skipEmitRef = useRef(false);
 
   const replaceState = (s: GameStateSnapshot) => {
@@ -124,6 +152,9 @@ function useGameState(socket: Socket | null) {
     setEncounterLog(s.encounterLog ?? []);
     setPendingLearn(s.pendingLearn ?? null);
     setEvolutionNotice(s.evolutionNotice ?? null);
+    setPvpRequest(s.pvpRequest ?? null);
+    setPvpBattle(s.pvpBattle ?? null);
+    setPvpTrade(s.pvpTrade ?? null);
   };
 
   useEffect(() => {
@@ -160,10 +191,13 @@ function useGameState(socket: Socket | null) {
       wildEncounter,
       encounterLog,
       pendingLearn,
-      evolutionNotice
+      evolutionNotice,
+      pvpRequest,
+      pvpBattle,
+      pvpTrade
     };
     socket.emit("stateUpdate", snapshot);
-  }, [socket, roomCode, phase, players, currentPlayerIndex, wildEncounter, encounterLog, pendingLearn, evolutionNotice]);
+  }, [socket, roomCode, phase, players, currentPlayerIndex, wildEncounter, encounterLog, pendingLearn, evolutionNotice, pvpRequest, pvpBattle, pvpTrade]);
 
   const addPlayer = (name: string) => {
     setPlayers((p) => {
@@ -540,6 +574,100 @@ function useGameState(socket: Socket | null) {
     setPendingLearn(null);
   };
 
+  const requestPvpBattle = (fromPlayerId: string, toPlayerId: string) => {
+    if (fromPlayerId === toPlayerId) return;
+    const from = players.find((p) => p.id === fromPlayerId);
+    const to = players.find((p) => p.id === toPlayerId);
+    if (!from || !to || from.team.length === 0 || to.team.length === 0) return;
+    setPvpRequest({ fromPlayerId, toPlayerId, type: "battle" });
+  };
+
+  const requestPvpTrade = (fromPlayerId: string, toPlayerId: string) => {
+    if (fromPlayerId === toPlayerId) return;
+    const from = players.find((p) => p.id === fromPlayerId);
+    const to = players.find((p) => p.id === toPlayerId);
+    if (!from || !to || from.team.length === 0 || to.team.length === 0) return;
+    setPvpRequest({ fromPlayerId, toPlayerId, type: "trade" });
+  };
+
+  const acceptPvpRequest = () => {
+    if (!pvpRequest) return;
+    const { fromPlayerId, toPlayerId, type } = pvpRequest;
+    setPvpRequest(null);
+    if (type === "battle") {
+      setPvpBattle({ challengerId: fromPlayerId, defenderId: toPlayerId });
+      setPhase("battle");
+    } else {
+      setPvpTrade({ playerAId: fromPlayerId, playerBId: toPlayerId, aSelectedIndex: null, bSelectedIndex: null });
+    }
+  };
+
+  const declinePvpRequest = () => {
+    setPvpRequest(null);
+  };
+
+  const endPvpBattle = (challengerLeadHp: number, defenderLeadHp: number) => {
+    if (!pvpBattle) return;
+    const { challengerId, defenderId } = pvpBattle;
+    setPlayers((ps) =>
+      ps.map((pl) => {
+        if (pl.id === challengerId && pl.team[0]) {
+          return { ...pl, team: [{ ...pl.team[0], hp: Math.max(0, challengerLeadHp) }, ...pl.team.slice(1)] };
+        }
+        if (pl.id === defenderId && pl.team[0]) {
+          return { ...pl, team: [{ ...pl.team[0], hp: Math.max(0, defenderLeadHp) }, ...pl.team.slice(1)] };
+        }
+        return pl;
+      })
+    );
+    setPvpBattle(null);
+    setPhase("map");
+  };
+
+  const setTradeSelection = (playerId: string, index: number | null) => {
+    if (!pvpTrade) return;
+    const { playerAId, playerBId } = pvpTrade;
+    setPvpTrade((t) =>
+      !t
+        ? t
+        : playerId === playerAId
+          ? { ...t, aSelectedIndex: index }
+          : playerId === playerBId
+            ? { ...t, bSelectedIndex: index }
+            : t
+    );
+  };
+
+  const executeTrade = () => {
+    if (!pvpTrade || pvpTrade.aSelectedIndex == null || pvpTrade.bSelectedIndex == null) return;
+    const { playerAId, playerBId, aSelectedIndex, bSelectedIndex } = pvpTrade;
+    setPlayers((ps) => {
+      const a = ps.find((p) => p.id === playerAId);
+      const b = ps.find((p) => p.id === playerBId);
+      if (!a || !b || a.team[aSelectedIndex] == null || b.team[bSelectedIndex] == null) return ps;
+      const monA = a.team[aSelectedIndex];
+      const monB = b.team[bSelectedIndex];
+      return ps.map((pl) => {
+        if (pl.id === playerAId) {
+          const newTeam = pl.team.slice();
+          newTeam[aSelectedIndex] = monB;
+          return { ...pl, team: newTeam };
+        }
+        if (pl.id === playerBId) {
+          const newTeam = pl.team.slice();
+          newTeam[bSelectedIndex] = monA;
+          return { ...pl, team: newTeam };
+        }
+        return pl;
+      });
+    });
+    setPvpTrade(null);
+  };
+
+  const cancelTrade = () => {
+    setPvpTrade(null);
+  };
+
   return {
     phase,
     setPhase,
@@ -566,7 +694,18 @@ function useGameState(socket: Socket | null) {
     setEvolutionNotice,
     replaceState,
     joinError,
-    setJoinError
+    setJoinError,
+    pvpRequest,
+    acceptPvpRequest,
+    declinePvpRequest,
+    requestPvpBattle,
+    requestPvpTrade,
+    pvpBattle,
+    endPvpBattle,
+    pvpTrade,
+    setTradeSelection,
+    executeTrade,
+    cancelTrade
   };
 }
 
@@ -599,7 +738,10 @@ export default function App() {
   const effectivePlayerIndex = isMultiplayer && myPlayerIndex >= 0 ? myPlayerIndex : game.currentPlayerIndex;
   const currentPlayer = game.players[effectivePlayerIndex];
 
-  const isMyBattle = !game.wildEncounter?.triggeredByPlayerId || game.wildEncounter.triggeredByPlayerId === socket?.id;
+  const isMyPvPBattle = game.pvpBattle && (socket?.id === game.pvpBattle.challengerId || socket?.id === game.pvpBattle.defenderId);
+  const isMyBattle =
+    (game.wildEncounter && (!game.wildEncounter.triggeredByPlayerId || game.wildEncounter.triggeredByPlayerId === socket?.id)) ||
+    isMyPvPBattle;
   const effectivePhase: Phase =
     isMultiplayer && game.phase === "battle" && !isMyBattle ? "map" : game.phase;
 
@@ -668,6 +810,11 @@ export default function App() {
               }
             }}
             searchWild={game.searchWild}
+            isMultiplayer={isMultiplayer}
+            myPlayerId={socket?.id ?? null}
+            requestPvpBattle={game.requestPvpBattle}
+            requestPvpTrade={game.requestPvpTrade}
+            pendingPvpRequest={game.pvpRequest}
           />
         )}
         <div id="bottom-nav-placeholder"></div>
@@ -711,10 +858,12 @@ export default function App() {
           </div>
         )}
 
-        {game.phase === "battle" && game.wildEncounter && isMyBattle && currentPlayer && (
+        {game.phase === "battle" && game.wildEncounter && isMyBattle && !game.pvpBattle && currentPlayer && (
           <BattleModal
             playerPokemon={currentPlayer.team[0]}
             enemyPokemon={game.wildEncounter.pokemon}
+            playerTeam={currentPlayer.team}
+            onSwitchPokemon={(i) => game.updatePlayerLead(currentPlayer!.id, i)}
             onEnd={(res) => {
               game.setPhase("map");
               game.setWildEncounter(null);
@@ -747,6 +896,84 @@ export default function App() {
             onGrantXp={(xp: number) => game.grantXpToLead(effectivePlayerIndex, xp)}
           />
         )}
+        {game.phase === "battle" && game.pvpBattle && isMyPvPBattle && currentPlayer && (() => {
+          const { challengerId, defenderId } = game.pvpBattle!;
+          const challenger = game.players.find((p) => p.id === challengerId);
+          const defender = game.players.find((p) => p.id === defenderId);
+          const myLead = currentPlayer.team[0];
+          const theirLead = (socket?.id === challengerId ? defender : challenger)?.team[0];
+          if (!myLead || !theirLead) return null;
+          return (
+            <BattleModal
+              isPvP
+              playerPokemon={myLead}
+              enemyPokemon={theirLead}
+              playerTeam={currentPlayer.team}
+              onSwitchPokemon={(i) => game.updatePlayerLead(currentPlayer.id, i)}
+              onEnd={(res) => {
+                if (res.playerFinalHp != null && res.enemyFinalHp != null) {
+                  game.endPvpBattle(res.playerFinalHp, res.enemyFinalHp);
+                } else {
+                  game.endPvpBattle(myLead.hp, theirLead.hp);
+                }
+              }}
+              onPlayerUpdate={(p) => {
+                if (currentPlayer) game.updateLeadPokemon(currentPlayer.id, p);
+              }}
+            />
+          );
+        })()}
+        {game.pvpRequest && game.pvpRequest.toPlayerId === socket?.id && (() => {
+          const from = game.players.find((p) => p.id === game.pvpRequest!.fromPlayerId);
+          const type = game.pvpRequest!.type;
+          return (
+            <div className="fixed inset-0 z-[55] flex items-center justify-center bg-black/60 p-4">
+              <div className="bg-gray-900 rounded-lg p-4 max-w-sm w-full text-white shadow-xl">
+                <p className="text-sm sm:text-base mb-4">
+                  <strong className="text-yellow-300">{from?.name ?? "Someone"}</strong> wants to {type === "battle" ? "battle" : "trade"} with you!
+                </p>
+                <div className="flex gap-2">
+                  <button className="pixel-btn flex-1" onClick={() => game.acceptPvpRequest()}>Accept</button>
+                  <button className="pixel-btn flex-1" onClick={() => game.declinePvpRequest()}>Decline</button>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
+        {game.pvpTrade && (socket?.id === game.pvpTrade.playerAId || socket?.id === game.pvpTrade.playerBId) && (() => {
+          const trade = game.pvpTrade;
+          const meId = socket!.id;
+          const myIndex = meId === trade!.playerAId ? "a" : "b";
+          const mySelection = myIndex === "a" ? trade!.aSelectedIndex : trade!.bSelectedIndex;
+          const myTeam = game.players.find((p) => p.id === meId)?.team ?? [];
+          const canConfirm = trade!.aSelectedIndex != null && trade!.bSelectedIndex != null;
+          return (
+            <div className="fixed inset-0 z-[55] flex items-center justify-center bg-black/60 p-4">
+              <div className="bg-gray-900 rounded-lg p-4 max-w-sm w-full text-white shadow-xl max-h-[90vh] overflow-y-auto">
+                <h3 className="text-base font-bold text-yellow-300 mb-3">Trade Pokémon</h3>
+                <p className="text-xs text-gray-400 mb-2">Choose one Pokémon to offer:</p>
+                <div className="space-y-2 mb-4">
+                  {myTeam.map((pk, i) => (
+                    <button
+                      key={i}
+                      className={`w-full flex items-center gap-2 p-2 rounded bg-gray-700 text-left ${mySelection === i ? "ring-2 ring-yellow-400" : ""}`}
+                      onClick={() => game.setTradeSelection(meId, mySelection === i ? null : i)}
+                    >
+                      <img src={pk.sprite} className="w-10 h-10" alt={pk.name} />
+                      <span className="text-sm">{pk.name} Lv{pk.level}</span>
+                    </button>
+                  ))}
+                </div>
+                <div className="flex gap-2">
+                  <button className="pixel-btn flex-1" onClick={() => game.cancelTrade()}>Cancel</button>
+                  <button className="pixel-btn flex-1" disabled={!canConfirm} onClick={() => game.executeTrade()}>
+                    {canConfirm ? "Confirm trade" : "Waiting for other..."}
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
         {showTeam && currentPlayer && <TeamPanel player={currentPlayer} onClose={() => setShowTeam(false)} onSetLead={(i)=>{ game.updatePlayerLead(currentPlayer.id, i); setShowTeam(false); }} />}
         {game.pendingLearn && game.pendingLearn.playerIndex === effectivePlayerIndex && (() => {
           const pl = game.players[game.pendingLearn!.playerIndex];
@@ -914,53 +1141,130 @@ function StarterSelectScreen({ players, selectStarter, starters, myPlayerId }: {
   );
 }
 
-function MapScreen({ players, currentPlayerIndex, movePlayer, searchWild }: { players: Player[]; currentPlayerIndex: number; movePlayer: (playerId: string, to: string) => void; searchWild: (playerId: string) => void }) {
+function MapScreen({
+  players,
+  currentPlayerIndex,
+  movePlayer,
+  searchWild,
+  isMultiplayer,
+  myPlayerId,
+  requestPvpBattle,
+  requestPvpTrade,
+  pendingPvpRequest
+}: {
+  players: Player[];
+  currentPlayerIndex: number;
+  movePlayer: (playerId: string, to: string) => void;
+  searchWild: (playerId: string) => void;
+  isMultiplayer?: boolean;
+  myPlayerId?: string | null;
+  requestPvpBattle?: (from: string, to: string) => void;
+  requestPvpTrade?: (from: string, to: string) => void;
+  pendingPvpRequest?: PvpRequest | null;
+}) {
   const current = players[currentPlayerIndex];
-  const locs = LOCATIONS;
+  const loc = LOCATIONS[current.location];
+  const typeInfo = loc ? LOCATION_TYPE_LABELS[loc.type] ?? { icon: "?", label: loc.type, bg: "bg-gray-700/50" } : { icon: "?", label: "?", bg: "bg-gray-700/50" };
+  const gymLeader = loc?.gym ? GYM_LEADER_SPRITES[loc.gym] : null;
+  const connections = loc?.connections ?? [];
+  const playersHere = isMultiplayer && myPlayerId
+    ? players.filter((p) => p.id !== myPlayerId && p.location === current.location)
+    : [];
+
   return (
     <div className="md:flex gap-4">
-      <div className="md:w-2/3 p-2 bg-gray-800 rounded-md min-w-0">
-        <div className="mb-2 text-xs sm:text-sm">Location: <strong className="truncate block sm:inline">{current.location}</strong></div>
-        <div className="mb-2 text-xs sm:text-sm">Available paths:</div>
-        <div className="flex flex-col gap-2">
-          {LOCATIONS[current.location]?.connections.map((c) => (
-            <div key={c} className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 bg-gray-700 p-2 rounded">
-              <div className="min-w-0 flex-1">
-                <div className="font-bold text-xs sm:text-base truncate">{c}</div>
-                <div className="text-[10px] sm:text-xs text-gray-300 truncate">{LOCATIONS[c]?.type ?? ""} — {(LOCATIONS[c]?.wildPool?.length ? `${LOCATIONS[c]!.wildPool!.length} possible wilds` : "")}</div>
-              </div>
-              <button className="pixel-btn w-full sm:w-auto flex-shrink-0" onClick={() => movePlayer(current.id, c)}>Move</button>
-            </div>
-          ))}
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 bg-gray-700 p-2 rounded">
-            <div className="min-w-0">
-              <div className="font-bold text-xs sm:text-base">Stay here</div>
-              <div className="text-[10px] sm:text-xs text-gray-300">Remain at {current.location}</div>
-            </div>
-            <button className="pixel-btn w-full sm:w-auto flex-shrink-0" onClick={() => { /* no-op stay */ }}>Stay</button>
+      <div className="md:w-2/3 space-y-4 min-w-0">
+        {/* You are here — current location card */}
+        <div className={`p-3 sm:p-4 rounded-lg border-2 border-yellow-500/60 ${typeInfo.bg} ring-2 ring-yellow-400/30`}>
+          <div className="flex items-center gap-2 mb-1">
+            <span className="text-[10px] sm:text-xs font-bold uppercase tracking-wider text-yellow-300">You are here</span>
+            <span className="text-lg sm:text-xl" title={typeInfo.label}>{typeInfo.icon}</span>
           </div>
-          {LOCATIONS[current.location]?.type === "grass" && (
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 bg-gray-700 p-2 rounded">
-              <div className="min-w-0">
-                <div className="font-bold text-xs sm:text-base">Search for wild Pokémon</div>
-                <div className="text-[10px] sm:text-xs text-gray-300">Look for another wild in the area.</div>
-              </div>
-              <button className="pixel-btn w-full sm:w-auto flex-shrink-0" onClick={() => searchWild(current.id)}>Search</button>
+          <div className="flex flex-wrap items-start gap-3 sm:gap-4">
+            <div className="min-w-0">
+              <h2 className="text-base sm:text-xl font-bold text-white truncate">{current.location}</h2>
+              <p className="text-xs sm:text-sm text-gray-300">{typeInfo.label}</p>
             </div>
-          )}
+            {loc?.gym && (
+              <div className="flex items-center gap-2 bg-gray-800/80 rounded-lg px-2 py-1.5 border border-amber-600/50">
+                <img
+                  src={gymLeader ?? ""}
+                  alt={loc.gym}
+                  className="w-12 h-12 sm:w-14 sm:h-14 object-contain bg-gray-900 rounded"
+                  onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+                />
+                <div>
+                  <span className="text-[10px] sm:text-xs text-amber-300 block">Gym Leader</span>
+                  <span className="text-sm sm:text-base font-bold text-white">{loc.gym}</span>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
+
+        {/* Paths from here — map structure */}
+        <div className="p-3 sm:p-4 bg-gray-800 rounded-lg min-w-0">
+          <div className="flex items-center gap-2 mb-3">
+            <span className="text-sm sm:text-base font-bold text-yellow-300">Paths from here</span>
+            <span className="text-xs text-gray-400">({connections.length} connection{connections.length !== 1 ? "s" : ""})</span>
+          </div>
+          <div className="space-y-2">
+            {connections.map((c) => {
+              const connLoc = LOCATIONS[c];
+              const connType = connLoc ? (LOCATION_TYPE_LABELS[connLoc.type] ?? { icon: "•", label: connLoc.type }) : { icon: "•", label: "" };
+              const wildInfo = connLoc?.wildPool?.length ? ` · ${connLoc.wildPool.length} wilds` : "";
+              return (
+                <div key={c} className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 bg-gray-700/80 hover:bg-gray-700 p-2.5 rounded-lg border border-gray-600/50">
+                  <div className="flex items-center gap-2 min-w-0 flex-1">
+                    <span className="text-base flex-shrink-0" title={connType.label}>{connType.icon}</span>
+                    <div className="min-w-0">
+                      <div className="font-bold text-xs sm:text-base truncate text-white">{c}</div>
+                      <div className="text-[10px] sm:text-xs text-gray-400 truncate">{connType.label}{wildInfo}</div>
+                    </div>
+                    <span className="text-gray-500 flex-shrink-0 sm:ml-1">→</span>
+                  </div>
+                  <button className="pixel-btn w-full sm:w-auto flex-shrink-0 text-xs sm:text-sm" onClick={() => movePlayer(current.id, c)}>Go</button>
+                </div>
+              );
+            })}
+          </div>
+          <div className="mt-3 pt-3 border-t border-gray-600/50 flex flex-col sm:flex-row gap-2">
+            <button className="pixel-btn flex-1 text-xs sm:text-sm bg-gray-600/80" onClick={() => {}}>Stay here</button>
+            {loc?.type === "grass" && (
+              <button className="pixel-btn flex-1 text-xs sm:text-sm" onClick={() => searchWild(current.id)}>Search for wild</button>
+            )}
+          </div>
+        </div>
+
+        {playersHere.length > 0 && (
+          <div className="p-3 bg-gray-800 rounded-lg border border-gray-600/50">
+            <div className="text-xs sm:text-sm font-bold text-yellow-300 mb-2">Players here</div>
+            <div className="flex flex-col gap-2">
+              {playersHere.map((p) => (
+                <div key={p.id} className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-xs sm:text-sm truncate">{p.name}</span>
+                  <div className="flex gap-2">
+                    <button className="pixel-btn text-[10px] sm:text-xs" onClick={() => requestPvpBattle?.(myPlayerId!, p.id)}>Battle</button>
+                    <button className="pixel-btn text-[10px] sm:text-xs" onClick={() => requestPvpTrade?.(myPlayerId!, p.id)}>Trade</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
-      <aside className="md:w-1/3 p-2 bg-gray-800 rounded-md mt-3 md:mt-0 min-w-0">
-        <div className="mb-2 text-xs sm:text-sm truncate">You: {current.name}</div>
-        <div className="mb-2 text-xs sm:text-sm truncate">Location: {current.location}</div>
-        <div className="mb-2 text-xs sm:text-sm">Team:</div>
+      <aside className="md:w-1/3 p-3 bg-gray-800 rounded-lg mt-3 md:mt-0 min-w-0 border border-gray-700/50">
+        <div className="text-xs sm:text-sm text-gray-400 mb-1">Playing as</div>
+        <div className="text-sm sm:text-base font-bold text-yellow-300 truncate mb-3">{current.name}</div>
+        <div className="text-[10px] sm:text-xs text-gray-500 mb-2 truncate" title={current.location}>📍 {current.location}</div>
+        <div className="text-xs sm:text-sm font-bold text-gray-300 mb-2">Team</div>
         <div className="space-y-2">
           {current.team.map((pk) => (
-            <div key={pk.id} className="flex items-center gap-2 bg-gray-700 p-2 rounded min-w-0">
-              <img src={pk.sprite} className="w-10 h-10 sm:w-12 sm:h-12 flex-shrink-0" alt={pk.name} />
+            <div key={pk.id} className="flex items-center gap-2 bg-gray-700/80 p-2 rounded min-w-0">
+              <img src={pk.sprite} className="w-10 h-10 sm:w-12 sm:h-12 flex-shrink-0 rounded" alt={pk.name} />
               <div className="min-w-0">
-                <div className="text-xs sm:text-sm truncate">{pk.name} Lv {pk.level}</div>
-                <div className="text-[10px] sm:text-xs">HP: {pk.hp}/{pk.maxHp}</div>
+                <div className="text-xs sm:text-sm truncate">{pk.name} Lv{pk.level}</div>
+                <div className="text-[10px] sm:text-xs text-gray-400">HP: {pk.hp}/{pk.maxHp}</div>
               </div>
             </div>
           ))}
