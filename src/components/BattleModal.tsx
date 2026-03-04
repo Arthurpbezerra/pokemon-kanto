@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { calculateDamage, whoGoesFirst } from "../engine/battle";
+import { calculateDamage, calculateDamageWithTypes, whoGoesFirst } from "../engine/battle";
 import { getMoveData, formatMoveName, xpForDefeatingEnemy } from "../api/pokeapi";
 
 type PokemonInstance = {
@@ -9,6 +9,7 @@ type PokemonInstance = {
   level: number;
   hp: number;
   maxHp: number;
+  types?: string[];
   stats?: { attack: number; defense: number; speed: number };
   moves?: string[];
   xp?: number;
@@ -27,9 +28,10 @@ type Props = {
   onCapture?: (guaranteed?: boolean) => void;
   onGrantXp?: (xp: number) => void;
   isPvP?: boolean;
+  isTrainerBattle?: boolean;
 };
 
-export default function BattleModal({ playerPokemon, enemyPokemon, playerTeam, onEnd, onPlayerUpdate, onSwitchPokemon, onCapture, isPvP }: Props) {
+export default function BattleModal({ playerPokemon, enemyPokemon, playerTeam, onEnd, onPlayerUpdate, onSwitchPokemon, onCapture, isPvP, isTrainerBattle }: Props) {
   const [p, setP] = useState<PokemonInstance>(() => ({ ...playerPokemon }));
   const [e, setE] = useState<PokemonInstance>(() => ({ ...enemyPokemon }));
   const [showMoves, setShowMoves] = useState(false);
@@ -66,44 +68,55 @@ export default function BattleModal({ playerPokemon, enemyPokemon, playerTeam, o
     if (busy) return;
     setBusy(true);
     // resolve player's move data
-    let playerMove: any = { name: moveName ?? "Attack", power: 40, accuracy: 100, damage_class: "physical" };
+    let playerMove: any = { name: moveName ?? "Attack", power: 40, accuracy: 100, damage_class: "physical", type: "normal" };
     if (moveName) {
       try {
         playerMove = await getMoveData(moveName);
       } catch {
-        playerMove = { name: moveName, power: 40, accuracy: 100, damage_class: "physical" };
+        playerMove = { name: moveName, power: 40, accuracy: 100, damage_class: "physical", type: "normal" };
       }
     }
     // determine order
     const first = whoGoesFirst(p.stats?.speed ?? 5, e.stats?.speed ?? 5);
     const attackerFirst = first === "a" ? "player" : "enemy";
 
-    const applyAttack = (attackerIsPlayer: boolean, mvPower: number, mvName?: string, mvClass: string = "physical") => {
+    const effectivenessMsg = (eff: "immune" | "weak" | "normal" | "super") => {
+      if (eff === "super") return " It's super effective!";
+      if (eff === "weak") return " It's not very effective...";
+      if (eff === "immune") return " It doesn't affect the target.";
+      return "";
+    };
+
+    const applyAttack = (attackerIsPlayer: boolean, mvPower: number, mvName?: string, mvClass: string = "physical", moveType?: string, defenderTypes?: string[]) => {
       if (attackerIsPlayer) {
-        // compute effective stats taking stages into account
         const atkBase = p.stats ?? { attack: 5, defense: 5, speed: 5 };
         const defBase = e.stats ?? { attack: 5, defense: 5, speed: 5 };
         const stageMult = (s: number) => (s >= 0 ? (2 + s) / 2 : 2 / (2 - s));
         const atkEff = { attack: Math.max(1, Math.floor((atkBase.attack ?? 5) * stageMult((p as any).stages?.attack ?? 0))), defense: Math.max(1, Math.floor((atkBase.defense ?? 5) * stageMult((p as any).stages?.defense ?? 0))), speed: Math.max(1, Math.floor((atkBase.speed ?? 5) * stageMult((p as any).stages?.speed ?? 0))), specialAttack: Math.max(1, Math.floor(((atkBase as any).specialAttack ?? 5) * stageMult((p as any).stages?.specialAttack ?? 0))) };
         const defEff = { attack: Math.max(1, Math.floor((defBase.attack ?? 5) * stageMult((e as any).stages?.attack ?? 0))), defense: Math.max(1, Math.floor((defBase.defense ?? 5) * stageMult((e as any).stages?.defense ?? 0))), speed: Math.max(1, Math.floor((defBase.speed ?? 5) * stageMult((e as any).stages?.speed ?? 0))), specialDefense: Math.max(1, Math.floor(((defBase as any).specialDefense ?? 5) * stageMult((e as any).stages?.specialDefense ?? 0))) };
-        const res = calculateDamage(atkEff as any, defEff as any, mvPower, mvClass ?? "physical", p.level ?? 5);
+        const defenderTy = defenderTypes ?? e.types ?? ["normal"];
+        const res = (moveType != null && defenderTy.length)
+          ? calculateDamageWithTypes(atkEff as any, defEff as any, mvPower, mvClass ?? "physical", p.level ?? 5, moveType, defenderTy)
+          : { ...calculateDamage(atkEff as any, defEff as any, mvPower, mvClass ?? "physical", p.level ?? 5), effectiveness: "normal" as const };
         setE((cur) => {
           const newHp = Math.max(0, cur.hp - res.damage);
-          pushLog(`${p.name} used ${mvName ?? "Attack"} and dealt ${res.damage}${res.isCrit ? " (CRIT)" : ""}.`);
+          pushLog(`${p.name} used ${mvName ?? "Attack"} and dealt ${res.damage}${res.isCrit ? " (CRIT)" : ""}.${effectivenessMsg(res.effectiveness)}`);
           return { ...cur, hp: newHp };
         });
       } else {
-        // enemy effective stats with stages
         const atkBaseE = e.stats ?? { attack: 5, defense: 5, speed: 5 };
         const defBaseP = p.stats ?? { attack: 5, defense: 5, speed: 5 };
         const stageMultE = (s: number) => (s >= 0 ? (2 + s) / 2 : 2 / (2 - s));
         const atkEffE = { attack: Math.max(1, Math.floor((atkBaseE.attack ?? 5) * stageMultE((e as any).stages?.attack ?? 0))), defense: Math.max(1, Math.floor((atkBaseE.defense ?? 5) * stageMultE((e as any).stages?.defense ?? 0))), speed: Math.max(1, Math.floor((atkBaseE.speed ?? 5) * stageMultE((e as any).stages?.speed ?? 0))), specialAttack: Math.max(1, Math.floor(((atkBaseE as any).specialAttack ?? 5) * stageMultE((e as any).stages?.specialAttack ?? 0))) };
         const defEffP = { attack: Math.max(1, Math.floor((defBaseP.attack ?? 5) * stageMultE((p as any).stages?.attack ?? 0))), defense: Math.max(1, Math.floor((defBaseP.defense ?? 5) * stageMultE((p as any).stages?.defense ?? 0))), speed: Math.max(1, Math.floor((defBaseP.speed ?? 5) * stageMultE((p as any).stages?.speed ?? 0))), specialDefense: Math.max(1, Math.floor(((defBaseP as any).specialDefense ?? 5) * stageMultE((p as any).stages?.specialDefense ?? 0))) };
-        const res = calculateDamage(atkEffE as any, defEffP as any, mvPower, mvClass ?? "physical", e.level ?? 5);
+        const defenderTy = defenderTypes ?? p.types ?? ["normal"];
+        const res = (moveType != null && defenderTy.length)
+          ? calculateDamageWithTypes(atkEffE as any, defEffP as any, mvPower, mvClass ?? "physical", e.level ?? 5, moveType, defenderTy)
+          : { ...calculateDamage(atkEffE as any, defEffP as any, mvPower, mvClass ?? "physical", e.level ?? 5), effectiveness: "normal" as const };
         setP((cur) => {
           const newHp = Math.max(0, cur.hp - res.damage);
           const updated = { ...cur, hp: newHp };
-          pushLog(`${e.name} used ${mvName ?? "Attack"} and dealt ${res.damage}${res.isCrit ? " (CRIT)" : ""}.`);
+          pushLog(`${e.name} used ${mvName ?? "Attack"} and dealt ${res.damage}${res.isCrit ? " (CRIT)" : ""}.${effectivenessMsg(res.effectiveness)}`);
           return updated;
         });
       }
@@ -149,18 +162,18 @@ export default function BattleModal({ playerPokemon, enemyPokemon, playerTeam, o
         if (playerMove.damage_class === "status") {
           applyStatChanges(true, playerMove.stat_changes ?? [], playerMove.name);
         } else {
-          applyAttack(true, playerMove.power ?? 40, playerMove.name, playerMove.damage_class ?? "physical");
+          applyAttack(true, playerMove.power ?? 40, playerMove.name, playerMove.damage_class ?? "physical", playerMove.type, e.types);
         }
       } else pushLog(`${p.name} used ${playerMove.name} but it missed!`);
     } else {
       // enemy selects move
       const enemyMoveName = (e.moves && e.moves.length > 0) ? e.moves[Math.floor(Math.random() * e.moves.length)] : undefined;
-      let enemyMove: any = { name: enemyMoveName ?? "Attack", power: 35, accuracy: 100 };
+      let enemyMove: any = { name: enemyMoveName ?? "Attack", power: 35, accuracy: 100, damage_class: "physical", type: "normal" };
       if (enemyMoveName) {
         try {
           enemyMove = await getMoveData(enemyMoveName);
         } catch {
-          enemyMove = { name: enemyMoveName, power: 35, accuracy: 100 };
+          enemyMove = { name: enemyMoveName, power: 35, accuracy: 100, damage_class: "physical", type: "normal" };
         }
       }
       const enemyHit = (enemyMove.accuracy ?? 100) === null ? true : (Math.random() * 100) < (enemyMove.accuracy ?? 100);
@@ -168,7 +181,7 @@ export default function BattleModal({ playerPokemon, enemyPokemon, playerTeam, o
         if (enemyMove.damage_class === "status") {
           applyStatChanges(false, enemyMove.stat_changes ?? [], enemyMove.name);
         } else {
-          applyAttack(false, enemyMove.power ?? 35, enemyMove.name, enemyMove.damage_class ?? "physical");
+          applyAttack(false, enemyMove.power ?? 35, enemyMove.name, enemyMove.damage_class ?? "physical", enemyMove.type, p.types);
         }
       } else pushLog(`${e.name} used ${enemyMove.name} but it missed!`);
     }
@@ -186,23 +199,23 @@ export default function BattleModal({ playerPokemon, enemyPokemon, playerTeam, o
       // enemy retaliates if alive - select enemy move
       if ((e.hp - 0) > 0) {
         const enemyMoveName = (e.moves && e.moves.length > 0) ? e.moves[Math.floor(Math.random() * e.moves.length)] : undefined;
-        let enemyMove: any = { name: enemyMoveName ?? "Attack", power: 35, accuracy: 100 };
+        let enemyMove: any = { name: enemyMoveName ?? "Attack", power: 35, accuracy: 100, damage_class: "physical", type: "normal" };
         if (enemyMoveName) {
           try {
             enemyMove = await getMoveData(enemyMoveName);
           } catch {
-            enemyMove = { name: enemyMoveName, power: 35, accuracy: 100 };
+            enemyMove = { name: enemyMoveName, power: 35, accuracy: 100, damage_class: "physical", type: "normal" };
           }
         }
         const enemyHit = (enemyMove.accuracy ?? 100) === null ? true : (Math.random() * 100) < (enemyMove.accuracy ?? 100);
-        if (enemyHit) applyAttack(false, enemyMove.power ?? 35, enemyMove.name, enemyMove.damage_class ?? "physical");
+        if (enemyHit) applyAttack(false, enemyMove.power ?? 35, enemyMove.name, enemyMove.damage_class ?? "physical", enemyMove.type, p.types);
         else pushLog(`${e.name} used ${enemyMove.name} but it missed!`);
       }
     } else {
       // player retaliates if alive
       if ((p.hp - 0) > 0) {
         const playerHit = (playerMove.accuracy ?? 100) === null ? true : (Math.random() * 100) < (playerMove.accuracy ?? 100);
-        if (playerHit) applyAttack(true, playerMove.power ?? 40, playerMove.name, playerMove.damage_class ?? "physical");
+        if (playerHit) applyAttack(true, playerMove.power ?? 40, playerMove.name, playerMove.damage_class ?? "physical", playerMove.type, e.types);
         else pushLog(`${p.name} used ${playerMove.name} but it missed!`);
       }
     }
@@ -220,7 +233,7 @@ export default function BattleModal({ playerPokemon, enemyPokemon, playerTeam, o
 
     if ((finalE && finalE.hp <= 0) || (e.hp <= 0)) {
       pushLog(`${e.name} fainted!`);
-      const xpGain = isPvP ? undefined : xpForDefeatingEnemy(e.level ?? 1);
+      const xpGain = (isPvP && !isTrainerBattle) ? undefined : xpForDefeatingEnemy(e.level ?? 1);
       const playerHp = (finalP ?? p).hp;
       const enemyHp = (finalE ?? e).hp;
       setBusy(false);
@@ -248,7 +261,7 @@ export default function BattleModal({ playerPokemon, enemyPokemon, playerTeam, o
   };
 
   const run = () => {
-    pushLog(isPvP ? "You forfeited!" : "You ran away!");
+    pushLog((isPvP || isTrainerBattle) ? "You forfeited!" : "You ran away!");
     try { onPlayerUpdate(p); } catch {}
     onEnd({ winner: "run", ...(isPvP && { playerFinalHp: p.hp, enemyFinalHp: e.hp }) });
   };
@@ -315,10 +328,10 @@ export default function BattleModal({ playerPokemon, enemyPokemon, playerTeam, o
 
         <div className="mt-3 sm:mt-4 flex-shrink-0">
           {!showMoves ? (
-            <div className={`grid gap-2 ${isPvP ? "grid-cols-2" : "grid-cols-2 sm:grid-cols-2"}`}>
+            <div className={`grid gap-2 ${(isPvP || isTrainerBattle) ? "grid-cols-2" : "grid-cols-2 sm:grid-cols-2"}`}>
               <button className="pixel-btn w-full" onClick={() => setShowMoves(true)} disabled={busy}>Attack</button>
-              <button className="pixel-btn w-full" onClick={run} disabled={busy}>{isPvP ? "Forfeit" : "Run"}</button>
-              {!isPvP && <button className="pixel-btn w-full col-span-2 sm:col-span-1" onClick={async () => {
+              <button className="pixel-btn w-full" onClick={run} disabled={busy}>{(isPvP || isTrainerBattle) ? "Forfeit" : "Run"}</button>
+              {!(isPvP || isTrainerBattle) && <button className="pixel-btn w-full col-span-2 sm:col-span-1" onClick={async () => {
                 if (!onCapture) return;
                 if (busy) return;
                 setBusy(true);
@@ -337,17 +350,17 @@ export default function BattleModal({ playerPokemon, enemyPokemon, playerTeam, o
               await sleep(400);
               // choose enemy move
               const enemyMoveName2 = (e.moves && e.moves.length > 0) ? e.moves[Math.floor(Math.random() * e.moves.length)] : undefined;
-              let enemyMove2: any = { name: enemyMoveName2 ?? "Attack", power: 35, accuracy: 100, damage_class: "physical" };
+              let enemyMove2: any = { name: enemyMoveName2 ?? "Attack", power: 35, accuracy: 100, damage_class: "physical", type: "normal" };
               if (enemyMoveName2) {
                 try {
                   enemyMove2 = await getMoveData(enemyMoveName2);
                 } catch {
-                  enemyMove2 = { name: enemyMoveName2, power: 35, accuracy: 100, damage_class: "physical" };
+                  enemyMove2 = { name: enemyMoveName2, power: 35, accuracy: 100, damage_class: "physical", type: "normal" };
                 }
               }
               const enemyHit2 = (enemyMove2.accuracy ?? 100) === null ? true : (Math.random() * 100) < (enemyMove2.accuracy ?? 100);
               if (enemyHit2) {
-                applyAttack(false, enemyMove2.power ?? 35, enemyMove2.name, enemyMove2.damage_class ?? "physical");
+                applyAttack(false, enemyMove2.power ?? 35, enemyMove2.name, enemyMove2.damage_class ?? "physical", enemyMove2.type, p.types);
               } else {
                 pushLog(`${e.name} used ${enemyMove2.name} but it missed!`);
               }
@@ -359,7 +372,7 @@ export default function BattleModal({ playerPokemon, enemyPokemon, playerTeam, o
                   setBusy(false);
                 }
               }} disabled={busy}>Capture</button>}
-              {!isPvP && <button className="pixel-btn w-full" onClick={async () => {
+              {!(isPvP || isTrainerBattle) && <button className="pixel-btn w-full" onClick={async () => {
                 if (!onCapture) return;
                 if (busy) return;
                 setBusy(true);

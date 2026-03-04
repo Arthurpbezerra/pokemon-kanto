@@ -3,6 +3,7 @@ type RawPokemon = {
   name: string;
   sprites: { front_default: string | null };
   stats: { base_stat: number; stat: { name: string } }[];
+  types?: { slot: number; type: { name: string } }[];
   moves: {
     move: { name: string };
     version_group_details: { level_learned_at: number; move_learn_method: { name: string }; version_group: { name: string } }[];
@@ -13,6 +14,7 @@ type PokemonTemplate = {
   id: number;
   name: string;
   sprite: string;
+  types: string[];
   baseStats: { hp: number; attack: number; defense: number; speed: number; specialAttack: number; specialDefense: number };
   moves: {
     name: string;
@@ -22,7 +24,7 @@ type PokemonTemplate = {
 
 const API_BASE = "https://pokeapi.co/api/v2";
 const cache = new Map<number, PokemonTemplate>();
-const moveCache = new Map<string, { name: string; power: number | null; accuracy: number | null; damage_class: string | null }>();
+const moveCache = new Map<string, { name: string; power: number | null; accuracy: number | null; damage_class: string | null; type: string }>();
 
 async function fetchRawPokemon(id: number): Promise<RawPokemon> {
   const res = await fetch(`${API_BASE}/pokemon/${id}`);
@@ -38,10 +40,12 @@ export async function getPokemonTemplate(id: number): Promise<PokemonTemplate> {
   raw.stats.forEach((s) => {
     stats[s.stat.name] = s.base_stat;
   });
+  const types = (raw.types ?? []).map((t) => t.type.name).filter(Boolean);
   const tpl: PokemonTemplate = {
     id: raw.id,
     name: raw.name[0].toUpperCase() + raw.name.slice(1),
     sprite,
+    types: types.length ? types : ["normal"],
     baseStats: {
       hp: stats["hp"] ?? 10,
       attack: stats["attack"] ?? 5,
@@ -81,6 +85,7 @@ export function makeInstanceFromTemplate(tpl: PokemonTemplate, level = 5) {
     id: tpl.id,
     name: tpl.name,
     sprite: tpl.sprite,
+    types: tpl.types ?? ["normal"],
     level,
     hp: maxHp,
     maxHp,
@@ -129,6 +134,26 @@ export function getMovesForLevel(
   return selected;
 }
 
+/** Returns move names learned exactly at the given level (level_learned_at === level), same version preference as getMovesForLevel. */
+export function getMovesLearnedAtLevel(
+  apiMoves: { name: string; versionDetails: { level_learned_at: number; move_learn_method: { name: string }; version_group?: { name: string } }[] }[],
+  atLevel: number
+): string[] {
+  const preferred = "red-blue";
+  const fallback = "firered-leafgreen";
+  const movesWithLevel: { name: string; learnedAt: number }[] = [];
+  for (const mv of apiMoves) {
+    const vgs = mv.versionDetails.filter((vd) => vd.move_learn_method?.name === "level-up" && vd.level_learned_at === atLevel);
+    if (vgs.length === 0) continue;
+    let chosen = vgs.filter((vd) => (vd as any).version_group?.name === preferred);
+    if (chosen.length === 0) chosen = vgs.filter((vd) => (vd as any).version_group?.name === fallback);
+    if (chosen.length === 0) chosen = vgs;
+    if (chosen.length > 0) movesWithLevel.push({ name: mv.name, learnedAt: atLevel });
+  }
+  movesWithLevel.sort((a, b) => a.learnedAt - b.learnedAt);
+  return movesWithLevel.map((m) => m.name);
+}
+
 export async function getStarters(ids: number[]) {
   const promises = ids.map((id) => getPokemonTemplate(id));
   const templates = await Promise.all(promises);
@@ -145,6 +170,7 @@ export async function getMoveData(name: string) {
     power: raw.power ?? null,
     accuracy: raw.accuracy ?? null,
     damage_class: raw.damage_class?.name ?? null,
+    type: (raw.type?.name ?? "normal").toLowerCase(),
     stat_changes: (raw.stat_changes || []).map((s: any) => ({ stat: s.stat?.name, change: s.change })),
     effect_entries: raw.effect_entries || []
   };

@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { io, Socket } from "socket.io-client";
-import { getPokemonTemplate, getStarters, makeInstanceFromTemplate, getMovesForLevel, getNextEvolution, xpToNextForLevel } from "./api/pokeapi";
+import { getPokemonTemplate, getStarters, makeInstanceFromTemplate, getMovesForLevel, getMovesLearnedAtLevel, getNextEvolution, xpToNextForLevel } from "./api/pokeapi";
 import BottomNav from "./components/BottomNav";
 import TeamPanel from "./components/TeamPanel";
 import LearnMoveModal from "./components/LearnMoveModal";
@@ -16,6 +16,7 @@ type Pokemon = {
   level: number;
   hp: number;
   maxHp: number;
+  types?: string[];
   stats?: { attack: number; defense: number; speed: number };
   xp?: number;
   xpToNext?: number;
@@ -54,7 +55,7 @@ export type GameStateSnapshot = {
   currentPlayerIndex: number;
   wildEncounter: null | { pokemon: Pokemon; location: string; triggeredByPlayerId?: string };
   encounterLog: string[];
-  pendingLearn: null | { playerIndex: number; pokemonIndex: number; newMove: string; newLevel: number };
+  pendingLearn: null | { playerIndex: number; pokemonIndex: number; newMove: string; newLevel: number; remainingMoves?: string[] };
   evolutionNotice: null | { playerIndex: number; oldName: string; newName: string };
   pvpRequest: PvpRequest | null;
   pvpBattle: PvpBattle | null;
@@ -137,7 +138,7 @@ function useGameState(socket: Socket | null) {
   const [currentPlayerIndex, setCurrentPlayerIndex] = useState(0);
   const [wildEncounter, setWildEncounter] = useState<null | { pokemon: Pokemon; location: string; triggeredByPlayerId?: string }>(null);
   const [encounterLog, setEncounterLog] = useState<string[]>([]);
-  const [pendingLearn, setPendingLearn] = useState<null | { playerIndex: number; pokemonIndex: number; newMove: string; newLevel: number }>(null);
+  const [pendingLearn, setPendingLearn] = useState<null | { playerIndex: number; pokemonIndex: number; newMove: string; newLevel: number; remainingMoves?: string[] }>(null);
   const [evolutionNotice, setEvolutionNotice] = useState<null | { playerIndex: number; oldName: string; newName: string }>(null);
   const [joinError, setJoinError] = useState<string | null>(null);
   const [pvpRequest, setPvpRequest] = useState<PvpRequest | null>(null);
@@ -145,13 +146,16 @@ function useGameState(socket: Socket | null) {
   const [pvpTrade, setPvpTrade] = useState<PvpTrade | null>(null);
   const skipEmitRef = useRef(false);
   const myBattleRef = useRef<{ phase: Phase; wildEncounter: typeof wildEncounter }>({ phase: "home", wildEncounter: null });
+  const playersLengthRef = useRef(0);
   myBattleRef.current = { phase, wildEncounter };
+  playersLengthRef.current = players.length;
 
   const replaceState = (s: GameStateSnapshot) => {
     skipEmitRef.current = true;
     const inMyBattle = socket && myBattleRef.current.wildEncounter?.triggeredByPlayerId === socket.id;
     const incomingClearsBattle = s.phase !== "battle" || !s.wildEncounter;
-    if (inMyBattle && incomingClearsBattle) {
+    const someoneJustJoined = s.players != null && s.players.length > playersLengthRef.current;
+    if (inMyBattle && (incomingClearsBattle || someoneJustJoined)) {
       setPlayers(s.players ?? []);
       setCurrentPlayerIndex(s.currentPlayerIndex ?? 0);
       setEncounterLog(s.encounterLog ?? []);
@@ -354,13 +358,7 @@ function useGameState(socket: Socket | null) {
     try {
       const tpl = await getPokemonTemplate(mon.id);
       const newInst = makeInstanceFromTemplate(tpl, level);
-      const learned = getMovesForLevel(tpl.moves as any, level);
-      let moves = mon.moves ?? [];
-      const additions = learned.filter((m) => !moves.includes(m));
-      for (const m of additions) {
-        if (moves.length < 4) moves.push(m);
-        else break;
-      }
+      const moves = mon.moves ?? [];
       // Full heal only when level increased; otherwise keep current HP
       const newHp = levelGained > 0 ? newInst.maxHp : Math.min(mon.hp ?? newInst.maxHp, newInst.maxHp);
       const updatedMon = { ...mon, level, xp: newXp, xpToNext, maxHp: newInst.maxHp, hp: newHp, stats: newInst.stats, moves };
@@ -368,6 +366,7 @@ function useGameState(socket: Socket | null) {
         ps.map((p, idx) => (idx === playerIdx ? { ...p, team: [updatedMon, ...p.team.slice(1)] } : p))
       );
       if (levelGained > 0) {
+        let didEvolve = false;
         try {
           const evo = await getNextEvolution(mon.id);
           if (evo && (evo.minLevel === null || level >= evo.minLevel)) {
@@ -377,8 +376,16 @@ function useGameState(socket: Socket | null) {
               ps.map((p, idx) => (idx === playerIdx ? { ...p, team: [evolved, ...p.team.slice(1)] } : p))
             );
             setEvolutionNotice({ playerIndex: playerIdx, oldName: mon.name, newName: evolved.name });
+            didEvolve = true;
           }
         } catch {}
+        if (!didEvolve) {
+          const newMovesAtLevel = getMovesLearnedAtLevel(tpl.moves as any, level);
+          const toLearn = newMovesAtLevel.filter((m) => !moves.includes(m));
+          if (toLearn.length > 0) {
+            setPendingLearn({ playerIndex: playerIdx, pokemonIndex: 0, newMove: toLearn[0], newLevel: level, remainingMoves: toLearn.slice(1) });
+          }
+        }
       }
     } catch {
       // Fallback when API fails: simple stat growth (+1 per stat, +2 maxHp per level gained)
@@ -409,19 +416,24 @@ function useGameState(socket: Socket | null) {
     const player = players[currentPlayerIndex];
     const lead = player.team[0];
     if (!lead) return;
-    // compute player damage
     let power = 5;
+    let moveType = "normal";
     if (moveName) {
       try {
         const mv = await import("./api/pokeapi").then(m => m.getMoveData(moveName));
         if (mv.power) power = mv.power;
+        if (mv.type) moveType = mv.type;
       } catch {
         power = 5;
       }
     }
+    const { getTypeEffectiveness } = await import("./engine/battle");
+    const defenderTypes = wildEncounter.pokemon.types ?? ["normal"];
+    const { multiplier: typeMult } = getTypeEffectiveness(moveType, defenderTypes);
     const atk = lead.stats?.attack ?? 5;
     const def = wildEncounter.pokemon.stats?.defense ?? 5;
-    const dmg = Math.max(1, Math.floor((atk / def) * power * (Math.random() * 0.4 + 0.8)));
+    const baseDmg = (atk / Math.max(1, def)) * power * (Math.random() * 0.4 + 0.8);
+    const dmg = Math.max(typeMult === 0 ? 0 : 1, Math.floor(baseDmg * typeMult));
     // apply damage to wild
     setWildEncounter((we) => {
       if (!we) return we;
@@ -466,30 +478,11 @@ function useGameState(socket: Socket | null) {
               return { ...pl, team: newTeam };
             })
           );
-          // check for new moves to learn
-          const additions = newMoves.filter((m) => !(lead.moves ?? []).includes(m));
-          if (additions.length > 0) {
-            const nm = additions[0];
-            if ((lead.moves ?? []).length < 4) {
-              // auto-learn
-              setPlayers((ps) =>
-                ps.map((pl, idx) => {
-                  if (idx !== playerIdx) return pl;
-                  if (!pl.team[0]) return pl;
-                  const cur = pl.team[0].moves ?? [];
-                  const updated = { ...pl.team[0], moves: Array.from(new Set([...cur, nm])).slice(0, 4) };
-                  return { ...pl, team: [updated, ...pl.team.slice(1)] };
-                })
-              );
-            } else {
-              // prompt player to replace or skip
-              setPendingLearn({ playerIndex: playerIdx, pokemonIndex: 0, newMove: nm, newLevel });
-            }
-          }
-          // check evolution: if next evolution exists and level meets requirement, evolve
+          // evolution first: if it evolves, evolved mon already has correct moves from template
+          let didEvolve = false;
           try {
             const evo = await getNextEvolution(lead.id);
-          if (evo && (evo.minLevel === null || newLevel >= evo.minLevel)) {
+            if (evo && (evo.minLevel === null || newLevel >= evo.minLevel)) {
               const evoTpl = await getPokemonTemplate(evo.id);
               const evolved = makeInstanceFromTemplate(evoTpl, newLevel);
               setPlayers((ps) =>
@@ -500,11 +493,18 @@ function useGameState(socket: Socket | null) {
                   return { ...pl, team: newTeam };
                 })
               );
-              // non-blocking evolution notice
               setEvolutionNotice({ playerIndex: playerIdx, oldName: lead.name, newName: evolved.name });
+              didEvolve = true;
             }
           } catch {
             // ignore evolution errors
+          }
+          if (!didEvolve) {
+            const newMovesAtLevel = getMovesLearnedAtLevel(tpl.moves as any, newLevel);
+            const toLearn = newMovesAtLevel.filter((m) => !(lead.moves ?? []).includes(m));
+            if (toLearn.length > 0) {
+              setPendingLearn({ playerIndex: playerIdx, pokemonIndex: 0, newMove: toLearn[0], newLevel, remainingMoves: toLearn.slice(1) });
+            }
           }
         } catch {
           // fallback: update stats without move changes
@@ -542,7 +542,8 @@ function useGameState(socket: Socket | null) {
         );
       }
     }
-    setEncounterLog((l) => [`You used ${moveName ?? "Tackle"} and dealt ${dmg} damage.`, ...l].slice(0, 6));
+    const effMsg = typeMult >= 2 ? " It's super effective!" : typeMult <= 0.5 && typeMult > 0 ? " It's not very effective..." : typeMult === 0 ? " It doesn't affect the target." : "";
+    setEncounterLog((l) => [`You used ${moveName ?? "Tackle"} and dealt ${dmg} damage.${effMsg}`, ...l].slice(0, 6));
     // wild retaliates if still alive
     setTimeout(() => {
       setWildEncounter((we) => {
@@ -576,10 +577,11 @@ function useGameState(socket: Socket | null) {
     setPlayers((ps) =>
       ps.map((pl) => {
         if (pl.id !== playerId || !pl.team.length) return pl;
-        const idx = Math.max(0, Math.min(leadIndex, pl.team.length - 1));
+        const idx = Math.floor(Math.max(0, Math.min(Number(leadIndex), pl.team.length - 1)));
         const newLead = pl.team[idx];
         const rest = pl.team.filter((_, i) => i !== idx);
-        return { ...pl, team: [newLead, ...rest] };
+        const newTeam = [newLead, ...rest].slice(0, pl.team.length);
+        return { ...pl, team: newTeam };
       })
     );
   };
@@ -600,9 +602,15 @@ function useGameState(socket: Socket | null) {
     );
   };
 
+  const addBadge = (playerId: string, badge: string) => {
+    setPlayers((ps) =>
+      ps.map((pl) => (pl.id === playerId && !pl.badges.includes(badge) ? { ...pl, badges: [...pl.badges, badge] } : pl))
+    );
+  };
+
   const finalizeLearn = (replaceIndex: number | null) => {
     if (!pendingLearn) return;
-    const { playerIndex, pokemonIndex, newMove } = pendingLearn;
+    const { playerIndex, pokemonIndex, newMove, newLevel, remainingMoves } = pendingLearn;
     setPlayers((ps) =>
       ps.map((pl, idx) => {
         if (idx !== playerIndex) return pl;
@@ -613,6 +621,9 @@ function useGameState(socket: Socket | null) {
         if (replaceIndex === null) {
           // skip learning
           updatedMoves = cur;
+        } else if (replaceIndex === -1) {
+          // add new move (slot free, < 4 moves)
+          updatedMoves = [...cur, newMove].slice(0, 4);
         } else {
           updatedMoves = cur.slice();
           updatedMoves[replaceIndex] = newMove;
@@ -623,7 +634,11 @@ function useGameState(socket: Socket | null) {
         return { ...pl, team: newTeam };
       })
     );
-    setPendingLearn(null);
+    if (remainingMoves && remainingMoves.length > 0) {
+      setPendingLearn({ playerIndex, pokemonIndex, newMove: remainingMoves[0], newLevel, remainingMoves: remainingMoves.slice(1) });
+    } else {
+      setPendingLearn(null);
+    }
   };
 
   const requestPvpBattle = (fromPlayerId: string, toPlayerId: string) => {
@@ -738,6 +753,7 @@ function useGameState(socket: Socket | null) {
     updatePlayerLead,
     updateLeadPokemon,
     healPlayer,
+    addBadge,
     searchWild,
     pendingLearn,
     finalizeLearn,
@@ -768,6 +784,7 @@ export default function App() {
   const [starters, setStarters] = useState<any[] | null>(null);
   const [cityModal, setCityModal] = useState<null | { name: string; description?: string; gym?: string | null }>(null);
   const [gymBattle, setGymBattle] = useState<null | { leader: string; team: any[]; index: number }>(null);
+  const [gymVictory, setGymVictory] = useState<string | null>(null);
   const [showTeam, setShowTeam] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
 
@@ -794,9 +811,12 @@ export default function App() {
   const myPlayerIdForUi = isSolo ? currentPlayer?.id : (isMultiplayer ? currentPlayer?.id : undefined);
 
   const isMyPvPBattle = game.pvpBattle && (socket?.id === game.pvpBattle.challengerId || socket?.id === game.pvpBattle.defenderId);
-  const isMyBattle =
-    (game.wildEncounter && (!game.wildEncounter.triggeredByPlayerId || game.wildEncounter.triggeredByPlayerId === socket?.id)) ||
-    isMyPvPBattle;
+  const isMyWildBattle = game.wildEncounter && (
+    !game.wildEncounter.triggeredByPlayerId ||
+    game.wildEncounter.triggeredByPlayerId === socket?.id ||
+    (isSolo && game.wildEncounter.triggeredByPlayerId === currentPlayer?.id)
+  );
+  const isMyBattle = isMyWildBattle || isMyPvPBattle;
   const effectivePhase: Phase =
     isMultiplayer && game.phase === "battle" && !isMyBattle ? "map" : game.phase;
 
@@ -915,6 +935,15 @@ export default function App() {
           />
         )}
 
+        {gymVictory && (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4">
+            <div className="bg-gray-900 p-4 rounded-lg text-white max-w-sm text-center shadow-xl">
+              <div className="font-bold text-yellow-300 mb-2 text-sm sm:text-base">Gym victory!</div>
+              <p className="text-xs sm:text-sm mb-4">You defeated {gymVictory} and earned the badge.</p>
+              <button className="pixel-btn w-full" onClick={() => setGymVictory(null)}>Close</button>
+            </div>
+          </div>
+        )}
         {game.evolutionNotice && game.evolutionNotice.playerIndex === effectivePlayerIndex && (
           <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-3 sm:p-4">
             <div className="bg-gray-900 p-4 rounded-md text-white w-full max-w-sm">
@@ -961,6 +990,33 @@ export default function App() {
               return false;
             }}
             onGrantXp={(xp: number) => game.grantXpToLead(effectivePlayerIndex, xp)}
+          />
+        )}
+        {gymBattle && currentPlayer && currentPlayer.team[0] && gymBattle.team[gymBattle.index] && (
+          <BattleModal
+            key={`gym-${gymBattle.leader}-${gymBattle.index}`}
+            isTrainerBattle
+            playerPokemon={currentPlayer.team[0]}
+            enemyPokemon={gymBattle.team[gymBattle.index]}
+            playerTeam={currentPlayer.team}
+            onSwitchPokemon={(i) => game.updatePlayerLead(currentPlayer!.id, i)}
+            onPlayerUpdate={(p) => { if (currentPlayer) game.updateLeadPokemon(currentPlayer.id, p); }}
+            onEnd={(res) => {
+              if (res.winner === "player") {
+                if (res.xpGain != null) {
+                  setTimeout(() => game.grantXpToLead(effectivePlayerIndex, res.xpGain!), 0);
+                }
+                if (gymBattle.index + 1 < gymBattle.team.length) {
+                  setGymBattle((prev) => prev ? { ...prev, index: prev.index + 1 } : null);
+                } else {
+                  game.addBadge(currentPlayer!.id, gymBattle.leader);
+                  setGymVictory(gymBattle.leader);
+                  setGymBattle(null);
+                }
+              } else {
+                setGymBattle(null);
+              }
+            }}
           />
         )}
         {game.phase === "battle" && game.pvpBattle && isMyPvPBattle && currentPlayer && (() => {
