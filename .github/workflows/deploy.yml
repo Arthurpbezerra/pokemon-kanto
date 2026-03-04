@@ -28,10 +28,7 @@ jobs:
         run: npm ci
 
       - name: Build
-        run: npm run build
-        env:
-          # Obrigatório: GitHub Pages serve em /<repo>/
-          VITE_BASE_PATH: "/${{ github.event.repository.name }}/"
+        run: npx vite build --base=/${{ github.event.repository.name }}/
 
       - name: Deploy to gh-pages
         uses: peaceiris/actions-gh-pages@v4
