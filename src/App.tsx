@@ -24,12 +24,15 @@ type Pokemon = {
   isFainted?: boolean;
 };
 
+export type PlayerScreen = "lobby" | "starter" | "map";
+
 type Player = {
   id: string;
   name: string;
   color: string;
   isHost?: boolean;
   isReady?: boolean;
+  screen?: PlayerScreen;
   location: string;
   team: Pokemon[];
   badges: string[];
@@ -141,9 +144,24 @@ function useGameState(socket: Socket | null) {
   const [pvpBattle, setPvpBattle] = useState<PvpBattle | null>(null);
   const [pvpTrade, setPvpTrade] = useState<PvpTrade | null>(null);
   const skipEmitRef = useRef(false);
+  const myBattleRef = useRef<{ phase: Phase; wildEncounter: typeof wildEncounter }>({ phase: "home", wildEncounter: null });
+  myBattleRef.current = { phase, wildEncounter };
 
   const replaceState = (s: GameStateSnapshot) => {
     skipEmitRef.current = true;
+    const inMyBattle = socket && myBattleRef.current.wildEncounter?.triggeredByPlayerId === socket.id;
+    const incomingClearsBattle = s.phase !== "battle" || !s.wildEncounter;
+    if (inMyBattle && incomingClearsBattle) {
+      setPlayers(s.players ?? []);
+      setCurrentPlayerIndex(s.currentPlayerIndex ?? 0);
+      setEncounterLog(s.encounterLog ?? []);
+      setPendingLearn(s.pendingLearn ?? null);
+      setEvolutionNotice(s.evolutionNotice ?? null);
+      setPvpRequest(s.pvpRequest ?? null);
+      setPvpBattle(s.pvpBattle ?? null);
+      setPvpTrade(s.pvpTrade ?? null);
+      return;
+    }
     setPhase(s.phase);
     setRoomCode(s.roomCode || "");
     setPlayers(s.players ?? []);
@@ -179,7 +197,7 @@ function useGameState(socket: Socket | null) {
   }, [socket]);
 
   useEffect(() => {
-    if (!socket || !roomCode || skipEmitRef.current) {
+    if (!socket || !roomCode || skipEmitRef.current || roomCode === "SOLO") {
       if (skipEmitRef.current) skipEmitRef.current = false;
       return;
     }
@@ -207,6 +225,7 @@ function useGameState(socket: Socket | null) {
         name,
         color: ["red", "blue", "green", "yellow"][p.length],
         isReady: false,
+        screen: "lobby",
         location: "Pallet Town",
         team: [],
         badges: []
@@ -218,21 +237,51 @@ function useGameState(socket: Socket | null) {
   const toggleReady = (id: string) =>
     setPlayers((ps) => ps.map((pl) => (pl.id === id ? { ...pl, isReady: !pl.isReady } : pl)));
 
-  const startGameIfReady = () => {
+  const startGameIfReady = (forPlayerId?: string) => {
     if (players.length === 0) return;
+    if (forPlayerId) {
+      setPlayers((ps) => ps.map((pl) => (pl.id === forPlayerId ? { ...pl, screen: "starter" as PlayerScreen } : pl)));
+      return;
+    }
     const allReady = players.every((p) => p.isReady);
-    if (allReady) setPhase("starter");
+    const canStart = allReady || players.length === 1;
+    if (canStart) setPhase("starter");
+  };
+
+  const startSingleplayer = (playerName: string) => {
+    const name = (playerName || "Player 1").trim() || "Player 1";
+    skipEmitRef.current = true;
+    setRoomCode("SOLO");
+    setPhase("lobby");
+    setPlayers([{
+      id: "solo",
+      name,
+      color: "red",
+      isHost: true,
+      isReady: true,
+      screen: "lobby",
+      location: "Pallet Town",
+      team: [],
+      badges: []
+    }]);
+    setCurrentPlayerIndex(0);
+    setWildEncounter(null);
+    setPvpRequest(null);
+    setPvpBattle(null);
+    setPvpTrade(null);
   };
 
   const selectStarter = (playerId: string, starterId: number) => {
-    // find template from cache via API module
     getPokemonTemplate(starterId).then((tpl) => {
       const inst = makeInstanceFromTemplate(tpl, 5);
       setPlayers((ps) =>
-        ps.map((pl) => (pl.id === playerId ? { ...pl, team: [{ ...inst }], location: "Pallet Town" } : pl))
+        ps.map((pl) =>
+          pl.id === playerId
+            ? { ...pl, team: [{ ...inst }], location: "Pallet Town", screen: "map" as PlayerScreen }
+            : pl
+        )
       );
     }).catch(() => {});
-    // check if all players have a team
     setTimeout(() => {
       const all = players.every((p) => p.team.length > 0 || p.id === playerId);
       if (all) setPhase("map");
@@ -245,12 +294,13 @@ function useGameState(socket: Socket | null) {
     );
     const loc = LOCATIONS[to];
     if (loc?.type === "grass" && loc.wildPool?.length) {
-      // spawn a wild pokemon (simple random)
       const pid = loc.wildPool[Math.floor(Math.random() * loc.wildPool.length)];
       getPokemonTemplate(pid).then((tpl) => {
         const lvl = Math.max(3, Math.floor(Math.random() * 5) + 3);
         const inst = makeInstanceFromTemplate(tpl, lvl);
-        setWildEncounter({ pokemon: inst, location: to, triggeredByPlayerId: playerId });
+        const encounter = { pokemon: inst, location: to, triggeredByPlayerId: playerId };
+        myBattleRef.current = { phase: "battle", wildEncounter: encounter };
+        setWildEncounter(encounter);
         setTimeout(() => setPhase("battle"), 50);
       }).catch(() => {});
     }
@@ -265,7 +315,9 @@ function useGameState(socket: Socket | null) {
     getPokemonTemplate(pid).then((tpl) => {
       const lvl = Math.max(3, Math.floor(Math.random() * 5) + 3);
       const inst = makeInstanceFromTemplate(tpl, lvl);
-      setWildEncounter({ pokemon: inst, location: pl.location, triggeredByPlayerId: playerId });
+      const encounter = { pokemon: inst, location: pl.location, triggeredByPlayerId: playerId };
+      myBattleRef.current = { phase: "battle", wildEncounter: encounter };
+      setWildEncounter(encounter);
       setTimeout(() => setPhase("battle"), 50);
     }).catch(() => {});
   };
@@ -705,7 +757,8 @@ function useGameState(socket: Socket | null) {
     pvpTrade,
     setTradeSelection,
     executeTrade,
-    cancelTrade
+    cancelTrade,
+    startSingleplayer
   };
 }
 
@@ -731,12 +784,14 @@ export default function App() {
     }).catch(() => {});
   }, []);
 
-  const isMultiplayer = Boolean(game.roomCode && socket);
+  const isSolo = game.roomCode === "SOLO";
+  const isMultiplayer = Boolean(game.roomCode && socket && !isSolo);
   const myPlayerIndex = isMultiplayer && socket
     ? game.players.findIndex((p) => p.id === socket.id)
     : -1;
   const effectivePlayerIndex = isMultiplayer && myPlayerIndex >= 0 ? myPlayerIndex : game.currentPlayerIndex;
   const currentPlayer = game.players[effectivePlayerIndex];
+  const myPlayerIdForUi = isSolo ? currentPlayer?.id : (isMultiplayer ? currentPlayer?.id : undefined);
 
   const isMyPvPBattle = game.pvpBattle && (socket?.id === game.pvpBattle.challengerId || socket?.id === game.pvpBattle.defenderId);
   const isMyBattle =
@@ -745,11 +800,20 @@ export default function App() {
   const effectivePhase: Phase =
     isMultiplayer && game.phase === "battle" && !isMyBattle ? "map" : game.phase;
 
+  const viewScreen: "home" | "lobby" | "starter" | "map" =
+    effectivePhase === "home"
+      ? "home"
+      : effectivePhase === "battle" && !isMyBattle
+        ? "map"
+        : (isMultiplayer || isSolo)
+          ? (currentPlayer?.screen ?? "lobby")
+          : (effectivePhase === "encounter" || effectivePhase === "battle" ? "map" : effectivePhase);
+
   return (
     <div className="min-h-screen p-3 sm:p-4 pb-0">
       <header className="mb-3 sm:mb-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
         <h1 className="text-sm sm:text-xl text-yellow-300 truncate">Pokémon Kanto</h1>
-        {effectivePhase !== "home" && (
+        {viewScreen !== "home" && (
           <div className="text-xs sm:text-sm text-gray-300">
             {isMultiplayer && currentPlayer ? (
               <>You: <strong>{currentPlayer.name}</strong></>
@@ -761,44 +825,47 @@ export default function App() {
       </header>
 
       <main className="main-with-nav">
-        {effectivePhase === "home" && (
+        {viewScreen === "home" && (
           <HomeScreen
             socket={socket}
             joinError={game.joinError}
             setJoinError={game.setJoinError}
+            isLocalhost={typeof window !== "undefined" && (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1")}
+            startSingleplayer={game.startSingleplayer}
           />
         )}
 
-        {effectivePhase !== "home" && game.players.length > 0 && !isMultiplayer && (
+        {viewScreen !== "home" && game.players.length > 0 && !isMultiplayer && (
           <div className="mb-4">
             <PlayerSwitcher players={game.players} current={game.currentPlayerIndex} setCurrent={game.setCurrentPlayerIndex} />
           </div>
         )}
-        {effectivePhase !== "home" && isMultiplayer && currentPlayer && (
+        {viewScreen !== "home" && isMultiplayer && currentPlayer && (
           <div className="mb-2 text-xs text-gray-400">Playing as <strong className="text-yellow-300">{currentPlayer.name}</strong></div>
         )}
 
-        {effectivePhase === "lobby" && (
+        {viewScreen === "lobby" && (
           <LobbyScreen
             players={game.players}
             addPlayer={game.addPlayer}
             toggleReady={game.toggleReady}
-            startGame={game.startGameIfReady}
+            startGame={() => game.startGameIfReady(myPlayerIdForUi)}
             roomCode={game.roomCode}
-            myPlayerId={isMultiplayer ? currentPlayer?.id : undefined}
+            myPlayerId={myPlayerIdForUi}
+            independentStart={isMultiplayer || isSolo}
           />
         )}
 
-        {effectivePhase === "starter" && starters && (
+        {viewScreen === "starter" && starters && (
           <StarterSelectScreen
             players={game.players}
             selectStarter={game.selectStarter}
             starters={starters}
-            myPlayerId={isMultiplayer ? currentPlayer?.id : undefined}
+            myPlayerId={myPlayerIdForUi}
           />
         )}
 
-        {effectivePhase === "map" && (
+        {viewScreen === "map" && (
           <MapScreen
             players={game.players}
             currentPlayerIndex={effectivePlayerIndex}
@@ -811,7 +878,7 @@ export default function App() {
             }}
             searchWild={game.searchWild}
             isMultiplayer={isMultiplayer}
-            myPlayerId={socket?.id ?? null}
+            myPlayerId={isSolo ? currentPlayer?.id ?? null : (isMultiplayer ? currentPlayer?.id ?? null : (socket?.id ?? null))}
             requestPvpBattle={game.requestPvpBattle}
             requestPvpTrade={game.requestPvpTrade}
             pendingPvpRequest={game.pvpRequest}
@@ -982,7 +1049,7 @@ export default function App() {
           return <LearnMoveModal pokemonName={mon.name} currentMoves={mon.moves ?? []} newMove={game.pendingLearn!.newMove} onReplace={(i:number)=>{ game.finalizeLearn(i); }} onSkip={()=>{ game.finalizeLearn(null); }} />;
         })()}
       </main>
-      {effectivePhase !== "home" && (
+      {viewScreen === "map" && (
         <BottomNav onSearch={() => { game.searchWild(currentPlayer?.id ?? ""); }} onTeam={() => setShowTeam(true)} onMap={() => game.setPhase("map")} onMenu={() => setShowMenu((s)=>!s)} />
       )}
     </div>
@@ -1004,11 +1071,15 @@ function PlayerSwitcher({ players, current, setCurrent }: { players: Player[]; c
 function HomeScreen({
   socket,
   joinError,
-  setJoinError
+  setJoinError,
+  isLocalhost,
+  startSingleplayer
 }: {
   socket: Socket | null;
   joinError: string | null;
   setJoinError: (v: string | null) => void;
+  isLocalhost?: boolean;
+  startSingleplayer?: (name: string) => void;
 }) {
   const [createName, setCreateName] = useState("");
   const [joinCode, setJoinCode] = useState("");
@@ -1025,9 +1096,29 @@ function HomeScreen({
     socket.emit("joinRoom", { code: joinCode.trim(), playerName: (joinName || "Player").trim() || "Player" });
   };
 
+  const handlePlayAlone = () => {
+    startSingleplayer?.((createName || "Player 1").trim() || "Player 1");
+  };
+
   return (
     <div className="max-w-md mx-auto space-y-6">
       <h2 className="text-sm sm:text-lg text-yellow-300 mb-4">Create or join a room</h2>
+
+      {isLocalhost && startSingleplayer && (
+        <div className="p-4 bg-amber-900/30 rounded-md border border-amber-600/50">
+          <div className="font-bold text-xs sm:text-sm mb-2 text-amber-300">Singleplayer (localhost)</div>
+          <p className="text-[10px] sm:text-xs text-gray-400 mb-2">Play alone to test the game. No room code needed.</p>
+          <input
+            className="w-full p-2 text-black text-sm min-h-[44px] mb-2 rounded"
+            placeholder="Your name"
+            value={createName}
+            onChange={(e) => setCreateName(e.target.value)}
+          />
+          <button className="pixel-btn w-full bg-amber-600 hover:bg-amber-500" onClick={handlePlayAlone}>
+            Play alone
+          </button>
+        </div>
+      )}
 
       <div className="p-4 bg-gray-800 rounded-md">
         <div className="font-bold text-xs sm:text-sm mb-2">Create room</div>
@@ -1066,13 +1157,21 @@ function HomeScreen({
   );
 }
 
-function LobbyScreen({ players, addPlayer, toggleReady, startGame, roomCode, myPlayerId }: { players: Player[]; addPlayer: (name: string) => void; toggleReady: (id: string) => void; startGame: () => void; roomCode?: string; myPlayerId?: string }) {
+function LobbyScreen({ players, addPlayer, toggleReady, startGame, roomCode, myPlayerId, independentStart }: { players: Player[]; addPlayer: (name: string) => void; toggleReady: (id: string) => void; startGame: () => void; roomCode?: string; myPlayerId?: string; independentStart?: boolean }) {
   const [name, setName] = useState("");
+  const canStart = independentStart ? players.length > 0 : (players.length > 0 && (players.every((p) => p.isReady) || players.length === 1));
   return (
     <div>
       <div className="mb-3 text-xs sm:text-sm">
         Lobby
-        {roomCode && <span className="block mt-1 text-yellow-300">Share code: <strong>{roomCode}</strong></span>}
+        {roomCode && (
+          <span className="block mt-1 text-yellow-300">
+            {roomCode === "SOLO" ? "Singleplayer" : <>Share code: <strong>{roomCode}</strong></>}
+          </span>
+        )}
+        {independentStart && roomCode && roomCode !== "SOLO" && (
+          <p className="text-[10px] text-gray-400 mt-1">Start when you want — you don’t need others to be ready.</p>
+        )}
       </div>
       {myPlayerId == null && (
         <div className="flex flex-col sm:flex-row gap-2 mb-3">
@@ -1097,7 +1196,7 @@ function LobbyScreen({ players, addPlayer, toggleReady, startGame, roomCode, myP
         ))}
       </div>
       <div className="mt-4">
-        {players.length > 0 && (
+        {!independentStart && players.length > 0 && (
           <p className="text-xs text-gray-400 mb-2">
             {players.every((p) => p.isReady)
               ? "Everyone is ready!"
@@ -1107,7 +1206,7 @@ function LobbyScreen({ players, addPlayer, toggleReady, startGame, roomCode, myP
         <button
           className="pixel-btn w-full disabled:opacity-50 disabled:cursor-not-allowed"
           onClick={startGame}
-          disabled={players.length === 0 || !players.every((p) => p.isReady)}
+          disabled={!canStart}
         >
           Start Game
         </button>

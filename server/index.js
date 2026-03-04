@@ -42,6 +42,7 @@ io.on("connection", (socket) => {
       color: COLORS[0],
       isHost: true,
       isReady: false,
+      screen: "lobby",
       location: "Pallet Town",
       team: [],
       badges: []
@@ -78,6 +79,7 @@ io.on("connection", (socket) => {
       color: COLORS[state.players.length],
       isHost: false,
       isReady: false,
+      screen: "lobby",
       location: "Pallet Town",
       team: [],
       badges: []
