@@ -31,6 +31,9 @@ type Pokemon = {
 
 export type PlayerScreen = "lobby" | "starter" | "map";
 
+const MAX_TEAM_SIZE = 6;
+const INITIAL_POKEBALLS = 10;
+
 type Player = {
   id: string;
   name: string;
@@ -41,6 +44,7 @@ type Player = {
   location: string;
   team: Pokemon[];
   badges: string[];
+  bag?: { pokeball: number };
 };
 
 type Phase = "home" | "lobby" | "starter" | "map" | "encounter" | "battle";
@@ -160,6 +164,7 @@ function useGameState(socket: Socket | null) {
   const [pvpRequest, setPvpRequest] = useState<PvpRequest | null>(null);
   const [pvpBattle, setPvpBattle] = useState<PvpBattle | null>(null);
   const [pvpTrade, setPvpTrade] = useState<PvpTrade | null>(null);
+  const [pendingReplaceCapture, setPendingReplaceCapture] = useState<null | { pokemon: Pokemon; playerIndex: number }>(null);
   const skipEmitRef = useRef(false);
   const skipEmitAfterPvpAcceptRef = useRef(false);
   const myBattleRef = useRef<{ phase: Phase; wildEncounter: typeof wildEncounter }>({ phase: "home", wildEncounter: null });
@@ -176,7 +181,7 @@ function useGameState(socket: Socket | null) {
       if (data?.roomCode === "SOLO" && Array.isArray(data.players) && data.players.length > 0) {
         setRoomCode("SOLO");
         setPhase(data.phase === "battle" ? "map" : (data.phase || "map"));
-        setPlayers(data.players);
+        setPlayers(data.players.map((p: Player) => ({ ...p, bag: p.bag ?? { pokeball: INITIAL_POKEBALLS } })));
         setCurrentPlayerIndex(data.currentPlayerIndex ?? 0);
         setWildEncounter(null);
       }
@@ -202,8 +207,9 @@ function useGameState(socket: Socket | null) {
     const inMyBattle = socket && myBattleRef.current.wildEncounter?.triggeredByPlayerId === socket.id;
     const incomingClearsBattle = s.phase !== "battle" || !s.wildEncounter;
     const someoneJustJoined = s.players != null && s.players.length > playersLengthRef.current;
+    const playersWithBag = (s.players ?? []).map((p: Player) => ({ ...p, bag: p.bag ?? { pokeball: INITIAL_POKEBALLS } }));
     if (inMyBattle && (incomingClearsBattle || someoneJustJoined)) {
-      setPlayers(s.players ?? []);
+      setPlayers(playersWithBag);
       setCurrentPlayerIndex(s.currentPlayerIndex ?? 0);
       setEncounterLog(s.encounterLog ?? []);
       setPendingLearn(s.pendingLearn ?? null);
@@ -211,11 +217,12 @@ function useGameState(socket: Socket | null) {
       setPvpRequest(s.pvpRequest ?? null);
       setPvpBattle(s.pvpBattle ?? null);
       setPvpTrade(s.pvpTrade ?? null);
+      setPendingReplaceCapture(null);
       return;
     }
     setPhase(s.phase);
     setRoomCode(s.roomCode || "");
-    setPlayers(s.players ?? []);
+    setPlayers(playersWithBag);
     setCurrentPlayerIndex(s.currentPlayerIndex ?? 0);
     setWildEncounter(s.wildEncounter ?? null);
     setEncounterLog(s.encounterLog ?? []);
@@ -224,6 +231,7 @@ function useGameState(socket: Socket | null) {
     setPvpRequest(s.pvpRequest ?? null);
     setPvpBattle(s.pvpBattle ?? null);
     setPvpTrade(s.pvpTrade ?? null);
+    setPendingReplaceCapture(null);
   };
 
   useEffect(() => {
@@ -284,7 +292,8 @@ function useGameState(socket: Socket | null) {
         screen: "lobby",
         location: "Pallet Town",
         team: [],
-        badges: []
+        badges: [],
+        bag: { pokeball: INITIAL_POKEBALLS }
       };
       return [...p, next];
     });
@@ -318,7 +327,8 @@ function useGameState(socket: Socket | null) {
       screen: "lobby",
       location: "Pallet Town",
       team: [],
-      badges: []
+      badges: [],
+      bag: { pokeball: INITIAL_POKEBALLS }
     }]);
     setCurrentPlayerIndex(0);
     setWildEncounter(null);
@@ -384,15 +394,47 @@ function useGameState(socket: Socket | null) {
     if (!wildEncounter) return false;
     const idx = forPlayerId != null ? players.findIndex((p) => p.id === forPlayerId) : currentPlayerIndex;
     if (idx < 0) return false;
+    const pl = players[idx];
+    const pokeballs = pl?.bag?.pokeball ?? 0;
+    if (pokeballs < 1) return false;
+    // Sempre gasta 1 Poké Bola ao tentar (sucesso ou falha)
+    const newBag = { pokeball: Math.max(0, (pl.bag?.pokeball ?? INITIAL_POKEBALLS) - 1) };
+    setPlayers((ps) =>
+      ps.map((p, i) => (i === idx ? { ...p, bag: newBag } : p))
+    );
     const ok = Math.random() < chance;
-    if (ok) {
-      sound.playSfx("capture");
-      setPlayers((ps) =>
-        ps.map((pl, i) => (i === idx ? { ...pl, team: [...pl.team, wildEncounter.pokemon] } : pl))
-      );
-      setWildEncounter(null);
+    if (!ok) return false;
+    sound.playSfx("capture");
+    const caught = wildEncounter.pokemon;
+    setWildEncounter(null);
+    setPlayers((ps) =>
+      ps.map((p, i) => {
+        if (i !== idx) return p;
+        const current = ps[i];
+        if ((current.team.length ?? 0) < MAX_TEAM_SIZE) {
+          return { ...current, team: [...current.team, caught] };
+        }
+        return current;
+      })
+    );
+    if ((pl?.team.length ?? 0) >= MAX_TEAM_SIZE) {
+      setPendingReplaceCapture({ pokemon: caught, playerIndex: idx });
     }
-    return ok;
+    return true;
+  };
+
+  const confirmReplaceCapture = (teamIndexToReplace: number) => {
+    const pending = pendingReplaceCapture;
+    if (!pending) return;
+    setPlayers((ps) =>
+      ps.map((pl, i) => {
+        if (i !== pending.playerIndex) return pl;
+        const team = [...pl.team];
+        team[teamIndexToReplace] = pending.pokemon;
+        return { ...pl, team };
+      })
+    );
+    setPendingReplaceCapture(null);
   };
  
   const grantXpToLead = async (playerIdx: number, xpGain: number) => {
@@ -806,6 +848,7 @@ function useGameState(socket: Socket | null) {
     setPvpRequest(null);
     setPvpBattle(null);
     setPvpTrade(null);
+    setPendingReplaceCapture(null);
   };
 
   return {
@@ -823,6 +866,8 @@ function useGameState(socket: Socket | null) {
     wildEncounter,
     setWildEncounter,
     captureAttempt,
+    confirmReplaceCapture,
+    pendingReplaceCapture,
     updatePlayerLead,
     updateLeadPokemon,
     healPlayer,
@@ -1071,6 +1116,7 @@ export default function App() {
             playerPokemon={currentPlayer.team[0]}
             enemyPokemon={game.wildEncounter.pokemon}
             playerTeam={currentPlayer.team}
+            pokeballCount={currentPlayer.bag?.pokeball ?? 0}
             onSwitchPokemon={(i) => game.updatePlayerLead(currentPlayer!.id, i)}
             onEnd={(res) => {
               sound.stopSfx("battle-start");
@@ -1088,19 +1134,14 @@ export default function App() {
             onPlayerUpdate={(p) => {
               if (currentPlayer) game.updateLeadPokemon(currentPlayer.id, p);
             }}
-            onCapture={(ultra) => {
+            onCapture={() => {
               if (!game.wildEncounter || !currentPlayer) return false;
-              if (ultra) return game.captureAttempt(1, currentPlayer.id);
               const we = game.wildEncounter.pokemon;
               const hpFactor = 1 - (we.hp / we.maxHp);
               const chance = Math.min(0.95, 0.5 + hpFactor * 0.6);
-              const ok = Math.random() < chance;
-              if (ok) {
-                const captured = game.captureAttempt(1, currentPlayer.id);
-                if (captured) game.grantXpToLead(effectivePlayerIndex, Math.max(1, (we.level ?? 1) * 5));
-                return captured;
-              }
-              return false;
+              const captured = game.captureAttempt(chance, currentPlayer.id);
+              if (captured) game.grantXpToLead(effectivePlayerIndex, Math.max(1, (we.level ?? 1) * 5));
+              return captured;
             }}
             onGrantXp={(xp: number) => game.grantXpToLead(effectivePlayerIndex, xp)}
           />
@@ -1283,6 +1324,32 @@ export default function App() {
             </div>
           </div>
         )}
+        {game.pendingReplaceCapture && game.pendingReplaceCapture.playerIndex === effectivePlayerIndex && currentPlayer && (() => {
+          const pending = game.pendingReplaceCapture!;
+          const team = game.players[pending.playerIndex]?.team ?? [];
+          if (team.length === 0) return null;
+          return (
+            <div className="fixed inset-0 z-[60] flex items-center justify-center modal-backdrop p-4">
+              <div className="card-panel p-4 max-w-sm w-full border-2 border-amber-500/50">
+                <div className="text-sm font-bold text-amber-300 mb-2">Team full (max 6)</div>
+                <p className="text-xs text-gray-300 mb-3">Choose a Pokémon to replace. The new {pending.pokemon.name} will take its place; the chosen one will be released.</p>
+                <div className="space-y-2">
+                  {team.map((mon, i) => (
+                    <button
+                      key={`${mon.id}-${i}`}
+                      type="button"
+                      className="pixel-btn w-full flex items-center gap-2 text-left"
+                      onClick={() => game.confirmReplaceCapture(i)}
+                    >
+                      <img src={mon.sprite} alt="" className="w-10 h-10 flex-shrink-0 rounded bg-gray-800" />
+                      <span className="text-xs sm:text-sm truncate">{mon.name} Lv{mon.level}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          );
+        })()}
         {game.pendingLearn && game.pendingLearn.playerIndex === effectivePlayerIndex && (() => {
           const pl = game.players[game.pendingLearn!.playerIndex];
           const mon = pl?.team[game.pendingLearn!.pokemonIndex];

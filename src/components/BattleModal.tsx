@@ -18,6 +18,10 @@ type PokemonInstance = {
 
 export type BattleEndResult = { winner: "player" | "enemy" | "run"; xpGain?: number; playerFinalHp?: number; enemyFinalHp?: number };
 
+function getHp(m: { hp?: number } | null | undefined): number {
+  return m && typeof (m as { hp?: number }).hp === "number" ? (m as { hp: number }).hp : 0;
+}
+
 type PvpBattleState = {
   log: string[];
   status: "waiting_moves" | "resolving" | "ended";
@@ -32,7 +36,8 @@ type Props = {
   onEnd: (result: BattleEndResult) => void;
   onPlayerUpdate: (p: PokemonInstance) => void;
   onSwitchPokemon?: (teamIndex: number) => void;
-  onCapture?: (guaranteed?: boolean) => void;
+  onCapture?: () => boolean | Promise<boolean>;
+  pokeballCount?: number;
   onGrantXp?: (xp: number) => void;
   isPvP?: boolean;
   isTrainerBattle?: boolean;
@@ -41,7 +46,7 @@ type Props = {
   pvpYouWon?: boolean;
 };
 
-export default function BattleModal({ playerPokemon, enemyPokemon, playerTeam, onEnd, onPlayerUpdate, onSwitchPokemon, onCapture, onGrantXp, isPvP, isTrainerBattle, pvpBattleState, onPvpSubmitMove, pvpYouWon }: Props) {
+export default function BattleModal({ playerPokemon, enemyPokemon, playerTeam, onEnd, onPlayerUpdate, onSwitchPokemon, onCapture, pokeballCount = 0, onGrantXp, isPvP, isTrainerBattle, pvpBattleState, onPvpSubmitMove, pvpYouWon }: Props) {
   const [p, setP] = useState<PokemonInstance>(() => ({ ...playerPokemon }));
   const [e, setE] = useState<PokemonInstance>(() => ({ ...enemyPokemon }));
   const [showMoves, setShowMoves] = useState(false);
@@ -239,25 +244,21 @@ export default function BattleModal({ playerPokemon, enemyPokemon, playerTeam, o
     setE((curE) => { finalE = curE; return curE; });
     await new Promise((r) => setTimeout(r, 50));
 
-    if ((finalE && finalE.hp <= 0) || (e.hp <= 0)) {
-      pushLog(`${e.name} fainted!`);
-      const xpGain = (isPvP && !isTrainerBattle) ? undefined : xpForDefeatingEnemy(e.level ?? 1);
-      const curP = (finalP ?? p) as PokemonInstance;
-      const curE = (finalE ?? e) as PokemonInstance;
-      const playerHp = curP.hp;
-      const enemyHp = curE.hp;
+    const curP = (finalP !== null ? finalP : playerPokemon) as PokemonInstance;
+    const curE = (finalE !== null ? finalE : enemyPokemon) as PokemonInstance;
+    const curPHp: number = getHp(curP);
+    const curEHp: number = getHp(curE);
+    if ((finalE !== null && getHp(finalE) <= 0) || curEHp <= 0) {
+      pushLog(`${curE.name} fainted!`);
+      const xpGain = (isPvP && !isTrainerBattle) ? undefined : xpForDefeatingEnemy(curE.level ?? 1);
       setBusy(false);
-      onEnd({ winner: "player", xpGain, ...(isPvP && { playerFinalHp: playerHp, enemyFinalHp: Math.max(0, enemyHp) }) });
+      onEnd({ winner: "player", xpGain, ...(isPvP && { playerFinalHp: curPHp, enemyFinalHp: Math.max(0, curEHp) }) });
       return;
     }
 
-    if ((finalP && finalP.hp <= 0) || (p.hp <= 0)) {
-      pushLog(`${p.name} fainted!`);
-      const curP = (finalP ?? p) as PokemonInstance;
-      const curE = (finalE ?? e) as PokemonInstance;
+    if ((finalP !== null && getHp(finalP) <= 0) || curPHp <= 0) {
+      pushLog(`${curP.name} fainted!`);
       try { onPlayerUpdate(curP); } catch {}
-      const playerHp = curP.hp;
-      const enemyHp = curE.hp;
       setBusy(false);
       const canSwitch = playerTeam && onSwitchPokemon && playerTeam.some((m) => m.hp > 0 && m.id !== curP.id);
       if (canSwitch) {
@@ -265,7 +266,7 @@ export default function BattleModal({ playerPokemon, enemyPokemon, playerTeam, o
         setShowSwitchPicker(true);
         return;
       }
-      onEnd({ winner: "enemy", ...(isPvP && { playerFinalHp: Math.max(0, playerHp), enemyFinalHp: enemyHp }) });
+      onEnd({ winner: "enemy", ...(isPvP && { playerFinalHp: Math.max(0, curPHp), enemyFinalHp: curEHp }) });
       return;
     }
 
@@ -369,75 +370,59 @@ export default function BattleModal({ playerPokemon, enemyPokemon, playerTeam, o
             <div className={`grid gap-2 ${(isPvP || isTrainerBattle) ? "grid-cols-2" : "grid-cols-2 sm:grid-cols-2"}`}>
               <button className="pixel-btn pixel-btn-primary w-full" onClick={() => setShowMoves(true)} disabled={busy || (pvpWaiting && pvpMyMoveSubmitted)}>⚔ Attack</button>
               <button className="pixel-btn w-full" onClick={run} disabled={busy}>{(isPvP || isTrainerBattle) ? "Forfeit" : "Run"}</button>
-              {!(isPvP || isTrainerBattle) && <button className="pixel-btn w-full col-span-2 sm:col-span-1" onClick={async () => {
-                if (!onCapture) return;
-                if (busy) return;
-                setBusy(true);
-                pushLog("Throwing Pokéball...");
-                console.log("BattleModal: attempting normal capture");
-                try {
-                  const ok = await Promise.resolve(onCapture(false));
-                  if (Boolean(ok)) {
-                    pushLog("Gotcha!");
-                    await sleep(700);
-                    try { onPlayerUpdate({ ...p, hp: p.hp }); } catch {}
-                    onEnd({ winner: "player" });
-                  } else {
-                    pushLog("It broke free!");
-                    await sleep(400);
-                    const enemyMoveName2 = (e.moves && e.moves.length > 0) ? e.moves[Math.floor(Math.random() * e.moves.length)] : undefined;
-                    let enemyMove2: any = { name: enemyMoveName2 ?? "Attack", power: 35, accuracy: 100, damage_class: "physical", type: "normal" };
-                    if (enemyMoveName2) {
-                      try {
-                        enemyMove2 = await getMoveData(enemyMoveName2);
-                      } catch {
-                        enemyMove2 = { name: enemyMoveName2, power: 35, accuracy: 100, damage_class: "physical", type: "normal" };
+              {!(isPvP || isTrainerBattle) && onCapture && (
+                <button
+                  className="pixel-btn w-full col-span-2 sm:col-span-1"
+                  onClick={async () => {
+                    if (busy || pokeballCount < 1) return;
+                    setBusy(true);
+                    pushLog("Throwing Pokéball...");
+                    try {
+                      const ok = await Promise.resolve(onCapture());
+                      if (Boolean(ok)) {
+                        pushLog("Gotcha!");
+                        await sleep(700);
+                        try { onPlayerUpdate({ ...p, hp: p.hp }); } catch {}
+                        onEnd({ winner: "player" });
+                      } else {
+                        pushLog("It broke free!");
+                        await sleep(400);
+                        const enemyMoveName2 = (e.moves && e.moves.length > 0) ? e.moves[Math.floor(Math.random() * e.moves.length)] : undefined;
+                        let enemyMove2: any = { name: enemyMoveName2 ?? "Attack", power: 35, accuracy: 100, damage_class: "physical", type: "normal" };
+                        if (enemyMoveName2) {
+                          try {
+                            enemyMove2 = await getMoveData(enemyMoveName2);
+                          } catch {
+                            enemyMove2 = { name: enemyMoveName2, power: 35, accuracy: 100, damage_class: "physical", type: "normal" };
+                          }
+                        }
+                        const enemyHit2 = (enemyMove2.accuracy ?? 100) === null ? true : (Math.random() * 100) < (enemyMove2.accuracy ?? 100);
+                        if (enemyHit2) {
+                          const atkBaseE = e.stats ?? { attack: 5, defense: 5, speed: 5 };
+                          const defBaseP = p.stats ?? { attack: 5, defense: 5, speed: 5 };
+                          const defenderTy = p.types ?? ["normal"];
+                          const res = calculateDamageWithTypes(atkBaseE as any, defBaseP as any, enemyMove2.power ?? 35, enemyMove2.damage_class ?? "physical", e.level ?? 5, enemyMove2.type, defenderTy);
+                          setP((cur) => {
+                            const newHp = Math.max(0, cur.hp - res.damage);
+                            pushLog(`${e.name} used ${enemyMove2.name} and dealt ${res.damage}.`);
+                            return { ...cur, hp: newHp };
+                          });
+                        } else {
+                          pushLog(`${e.name} used ${enemyMove2.name} but it missed!`);
+                        }
                       }
+                    } catch (err) {
+                      console.error("capture error", err);
+                      pushLog("Capture failed unexpectedly.");
+                    } finally {
+                      setBusy(false);
                     }
-                    const enemyHit2 = (enemyMove2.accuracy ?? 100) === null ? true : (Math.random() * 100) < (enemyMove2.accuracy ?? 100);
-                    if (enemyHit2) {
-                      const atkBaseE = e.stats ?? { attack: 5, defense: 5, speed: 5 };
-                      const defBaseP = p.stats ?? { attack: 5, defense: 5, speed: 5 };
-                      const defenderTy = p.types ?? ["normal"];
-                      const res = calculateDamageWithTypes(atkBaseE as any, defBaseP as any, enemyMove2.power ?? 35, enemyMove2.damage_class ?? "physical", e.level ?? 5, enemyMove2.type, defenderTy);
-                      setP((cur) => {
-                        const newHp = Math.max(0, cur.hp - res.damage);
-                        pushLog(`${e.name} used ${enemyMove2.name} and dealt ${res.damage}.`);
-                        return { ...cur, hp: newHp };
-                      });
-                    } else {
-                      pushLog(`${e.name} used ${enemyMove2.name} but it missed!`);
-                    }
-                  }
-                } catch (err) {
-                  console.error("capture error", err);
-                  pushLog("Capture failed unexpectedly.");
-                } finally {
-                  setBusy(false);
-                }
-              }} disabled={busy}>Capture</button>}
-              {!(isPvP || isTrainerBattle) && <button className="pixel-btn w-full" onClick={async () => {
-                if (!onCapture) return;
-                if (busy) return;
-                setBusy(true);
-                pushLog("Throwing Ultra Ball...");
-                try {
-                  const ok = await Promise.resolve(onCapture(true));
-                  if (Boolean(ok)) {
-                    pushLog("Gotcha with Ultra Ball!");
-                    await sleep(700);
-                    try { onPlayerUpdate({ ...p, hp: p.hp }); } catch {}
-                    onEnd({ winner: "player" });
-                  } else {
-                    pushLog("Ultra Ball failed!");
-                  }
-                } catch (err) {
-                  console.error("ultraball error", err);
-                  pushLog("Ultra Ball failed unexpectedly.");
-                } finally {
-                  setBusy(false);
-                }
-              }} disabled={busy}>Ultra Ball</button>}
+                  }}
+                  disabled={busy || pokeballCount < 1}
+                >
+                  Capture ({pokeballCount})
+                </button>
+              )}
             </div>
           ) : (
             <div className="grid grid-cols-2 gap-2">

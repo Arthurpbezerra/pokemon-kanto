@@ -46,7 +46,8 @@ io.on("connection", (socket) => {
       screen: "lobby",
       location: "Pallet Town",
       team: [],
-      badges: []
+      badges: [],
+      bag: { pokeball: 10 }
     };
 
     const state = createInitialState(code, firstPlayer);
@@ -83,7 +84,8 @@ io.on("connection", (socket) => {
       screen: "lobby",
       location: "Pallet Town",
       team: [],
-      badges: []
+      badges: [],
+      bag: { pokeball: 10 }
     };
     state.players.push(newPlayer);
     socket.join(roomCode);
