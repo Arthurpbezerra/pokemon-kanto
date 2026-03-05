@@ -96,6 +96,11 @@ io.on("connection", (socket) => {
     const roomCode = socket.roomCode;
     if (!roomCode || !rooms.has(roomCode)) return;
     if (state.roomCode !== roomCode) return;
+    const current = rooms.get(roomCode);
+    // Don't let a stale stateUpdate overwrite an active PvP battle (e.g. right after pvpAccept)
+    if (current?.pvpBattle && current.pvpBattle.status !== "ended") {
+      if (!state.pvpBattle || state.phase !== "battle") return;
+    }
     rooms.set(roomCode, state);
     socket.to(roomCode).emit("state", state);
   });

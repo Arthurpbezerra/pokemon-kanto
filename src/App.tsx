@@ -161,6 +161,7 @@ function useGameState(socket: Socket | null) {
   const [pvpBattle, setPvpBattle] = useState<PvpBattle | null>(null);
   const [pvpTrade, setPvpTrade] = useState<PvpTrade | null>(null);
   const skipEmitRef = useRef(false);
+  const skipEmitAfterPvpAcceptRef = useRef(false);
   const myBattleRef = useRef<{ phase: Phase; wildEncounter: typeof wildEncounter }>({ phase: "home", wildEncounter: null });
   const playersLengthRef = useRef(0);
   myBattleRef.current = { phase, wildEncounter };
@@ -197,6 +198,7 @@ function useGameState(socket: Socket | null) {
 
   const replaceState = (s: GameStateSnapshot) => {
     skipEmitRef.current = true;
+    skipEmitAfterPvpAcceptRef.current = false;
     const inMyBattle = socket && myBattleRef.current.wildEncounter?.triggeredByPlayerId === socket.id;
     const incomingClearsBattle = s.phase !== "battle" || !s.wildEncounter;
     const someoneJustJoined = s.players != null && s.players.length > playersLengthRef.current;
@@ -246,8 +248,13 @@ function useGameState(socket: Socket | null) {
   }, [socket]);
 
   useEffect(() => {
-    if (!socket || !roomCode || skipEmitRef.current || roomCode === "SOLO") {
-      if (skipEmitRef.current) skipEmitRef.current = false;
+    if (!socket || !roomCode || roomCode === "SOLO") return;
+    if (skipEmitRef.current) {
+      skipEmitRef.current = false;
+      return;
+    }
+    if (skipEmitAfterPvpAcceptRef.current) {
+      skipEmitAfterPvpAcceptRef.current = false;
       return;
     }
     const snapshot: GameStateSnapshot = {
@@ -711,10 +718,12 @@ function useGameState(socket: Socket | null) {
   const acceptPvpRequest = () => {
     if (!pvpRequest) return;
     const { fromPlayerId, toPlayerId, type } = pvpRequest;
-    setPvpRequest(null);
     if (type === "battle") {
+      skipEmitAfterPvpAcceptRef.current = true;
       if (socket) socket.emit("pvpAccept", { fromPlayerId, toPlayerId });
-    } else {
+    }
+    setPvpRequest(null);
+    if (type !== "battle") {
       setPvpTrade({ playerAId: fromPlayerId, playerBId: toPlayerId, aSelectedIndex: null, bSelectedIndex: null });
     }
   };
