@@ -9,6 +9,8 @@ import BattleModal from "./components/BattleModal";
 import CityModal from "./components/CityModal";
 import AchievementToast, { type AchievementData } from "./components/AchievementToast";
 import KantoMapView from "./components/KantoMapView";
+import SecretGigiEvent, { clearGigiEventStorage } from "./components/SecretGigiEvent";
+import { isSecretGigiName, EEVEE_ID } from "./secret-gigi.config";
 
 const WS_URL = (import.meta.env.VITE_WS_URL && String(import.meta.env.VITE_WS_URL).trim()) || (typeof window !== "undefined" ? window.location.origin : "http://localhost:3001");
 const SOLO_SAVE_KEY = "pokemon-kanto-solo";
@@ -33,6 +35,8 @@ export type PlayerScreen = "lobby" | "starter" | "map";
 
 const MAX_TEAM_SIZE = 6;
 const INITIAL_POKEBALLS = 10;
+const INITIAL_COINS = 10;
+const POKEBALL_PRICE = 1;
 
 type Player = {
   id: string;
@@ -44,7 +48,7 @@ type Player = {
   location: string;
   team: Pokemon[];
   badges: string[];
-  bag?: { pokeball: number };
+  bag?: { pokeball: number; coins: number };
 };
 
 type Phase = "home" | "lobby" | "starter" | "map" | "encounter" | "battle";
@@ -181,7 +185,7 @@ function useGameState(socket: Socket | null) {
       if (data?.roomCode === "SOLO" && Array.isArray(data.players) && data.players.length > 0) {
         setRoomCode("SOLO");
         setPhase(data.phase === "battle" ? "map" : (data.phase || "map"));
-        setPlayers(data.players.map((p: Player) => ({ ...p, bag: p.bag ?? { pokeball: INITIAL_POKEBALLS } })));
+        setPlayers(data.players.map((p: Player) => ({ ...p, bag: p.bag ?? { pokeball: INITIAL_POKEBALLS, coins: INITIAL_COINS } })));
         setCurrentPlayerIndex(data.currentPlayerIndex ?? 0);
         setWildEncounter(null);
       }
@@ -207,7 +211,7 @@ function useGameState(socket: Socket | null) {
     const inMyBattle = socket && myBattleRef.current.wildEncounter?.triggeredByPlayerId === socket.id;
     const incomingClearsBattle = s.phase !== "battle" || !s.wildEncounter;
     const someoneJustJoined = s.players != null && s.players.length > playersLengthRef.current;
-    const playersWithBag = (s.players ?? []).map((p: Player) => ({ ...p, bag: p.bag ?? { pokeball: INITIAL_POKEBALLS } }));
+    const playersWithBag = (s.players ?? []).map((p: Player) => ({ ...p, bag: p.bag ?? { pokeball: INITIAL_POKEBALLS, coins: INITIAL_COINS } }));
     if (inMyBattle && (incomingClearsBattle || someoneJustJoined)) {
       setPlayers(playersWithBag);
       setCurrentPlayerIndex(s.currentPlayerIndex ?? 0);
@@ -293,7 +297,7 @@ function useGameState(socket: Socket | null) {
         location: "Pallet Town",
         team: [],
         badges: [],
-        bag: { pokeball: INITIAL_POKEBALLS }
+        bag: { pokeball: INITIAL_POKEBALLS, coins: INITIAL_COINS }
       };
       return [...p, next];
     });
@@ -328,7 +332,7 @@ function useGameState(socket: Socket | null) {
       location: "Pallet Town",
       team: [],
       badges: [],
-      bag: { pokeball: INITIAL_POKEBALLS }
+      bag: { pokeball: INITIAL_POKEBALLS, coins: INITIAL_COINS }
     }]);
     setCurrentPlayerIndex(0);
     setWildEncounter(null);
@@ -359,9 +363,11 @@ function useGameState(socket: Socket | null) {
       ps.map((pl) => (pl.id === playerId ? { ...pl, location: to } : pl))
     );
     const loc = LOCATIONS[to];
-    if (loc?.type === "grass" && loc.wildPool?.length) {
+    const pool = loc?.wildPool;
+    const canEncounter = pool && pool.length > 0 && (loc.type === "grass" || loc.type === "cave" || loc.type === "water");
+    if (canEncounter && pool) {
       sound.playSfx("battle-start");
-      const pid = loc.wildPool[Math.floor(Math.random() * loc.wildPool.length)];
+      const pid = pool[Math.floor(Math.random() * pool.length)];
       getPokemonTemplate(pid).then((tpl) => {
         const lvl = Math.max(3, Math.floor(Math.random() * 5) + 3);
         const inst = makeInstanceFromTemplate(tpl, lvl);
@@ -398,7 +404,8 @@ function useGameState(socket: Socket | null) {
     const pokeballs = pl?.bag?.pokeball ?? 0;
     if (pokeballs < 1) return false;
     // Sempre gasta 1 Poké Bola ao tentar (sucesso ou falha)
-    const newBag = { pokeball: Math.max(0, (pl.bag?.pokeball ?? INITIAL_POKEBALLS) - 1) };
+    const coins = pl.bag?.coins ?? INITIAL_COINS;
+    const newBag = { pokeball: Math.max(0, (pl.bag?.pokeball ?? INITIAL_POKEBALLS) - 1), coins };
     setPlayers((ps) =>
       ps.map((p, i) => (i === idx ? { ...p, bag: newBag } : p))
     );
@@ -708,6 +715,26 @@ function useGameState(socket: Socket | null) {
     );
   };
 
+  const buyPokeball = (playerId: string) => {
+    const pl = players.find((p) => p.id === playerId);
+    const coins = pl?.bag?.coins ?? 0;
+    if (coins < POKEBALL_PRICE) return false;
+    setPlayers((ps) =>
+      ps.map((p) => {
+        if (p.id !== playerId) return p;
+        const bag = p.bag ?? { pokeball: INITIAL_POKEBALLS, coins: INITIAL_COINS };
+        return {
+          ...p,
+          bag: {
+            pokeball: bag.pokeball + 1,
+            coins: bag.coins - POKEBALL_PRICE
+          }
+        };
+      })
+    );
+    return true;
+  };
+
   const finalizeLearn = (replaceIndex: number | null) => {
     if (!pendingLearn) return;
     const { playerIndex, pokemonIndex, newMove, newLevel, remainingMoves } = pendingLearn;
@@ -837,6 +864,7 @@ function useGameState(socket: Socket | null) {
   };
 
   const leaveRoom = () => {
+    clearGigiEventStorage();
     setPhase("home");
     setRoomCode("");
     setPlayers([]);
@@ -872,6 +900,7 @@ function useGameState(socket: Socket | null) {
     updateLeadPokemon,
     healPlayer,
     addBadge,
+    buyPokeball,
     searchWild,
     pendingLearn,
     finalizeLearn,
@@ -1025,7 +1054,15 @@ export default function App() {
           />
         )}
 
-        {viewScreen === "starter" && starters && (
+        {viewScreen === "starter" && starters && currentPlayer && isSecretGigiName(currentPlayer.name) && (
+          <SecretGigiEvent
+            playerName={currentPlayer.name}
+            onComplete={() => {
+              game.selectStarter(currentPlayer!.id, EEVEE_ID);
+            }}
+          />
+        )}
+        {viewScreen === "starter" && starters && (!currentPlayer || !isSecretGigiName(currentPlayer.name)) && (
           <StarterSelectScreen
             players={game.players}
             selectStarter={game.selectStarter}
@@ -1067,6 +1104,9 @@ export default function App() {
             name={cityModal.name}
             description={cityModal.description}
             gym={cityModal.gym}
+            coins={currentPlayer?.bag?.coins ?? 0}
+            pokeballCount={currentPlayer?.bag?.pokeball ?? 0}
+            onBuyPokeball={() => game.buyPokeball(currentPlayer?.id ?? "")}
             onClose={() => setCityModal(null)}
             onHeal={() => game.healPlayer(currentPlayer?.id ?? "")}
             onChallenge={() => {
@@ -1654,8 +1694,10 @@ function MapScreen({
           </div>
           <div className="mt-3 pt-3 border-t border-gray-600/50 flex flex-col sm:flex-row gap-2">
             <button className="pixel-btn flex-1 text-xs sm:text-sm bg-gray-600/80" onClick={() => {}}>Stay here</button>
-            {loc?.type === "grass" && (
-              <button className="pixel-btn pixel-btn-primary flex-1 text-xs sm:text-sm" onClick={() => searchWild(current.id)}>🌿 Search for wild</button>
+            {loc?.wildPool && loc.wildPool.length > 0 && (
+              <button className="pixel-btn pixel-btn-primary flex-1 text-xs sm:text-sm" onClick={() => searchWild(current.id)}>
+                {loc.type === "cave" ? "⛰" : loc.type === "water" ? "🌊" : "🌿"} Search for wild
+              </button>
             )}
           </div>
         </div>

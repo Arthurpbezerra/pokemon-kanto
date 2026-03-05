@@ -178,8 +178,11 @@ export async function getMoveData(name: string) {
   return entry;
 }
 
+/** Eevee evolui por pedra (Water/Thunder/Fire), não por nível — não evoluir automaticamente. */
+const NO_LEVEL_EVOLUTION_IDS = [133]; // Eevee
+
 export async function getNextEvolution(pokemonId: number) {
-  // fetch species to get species name and evolution chain url
+  if (NO_LEVEL_EVOLUTION_IDS.includes(pokemonId)) return null;
   const spRes = await fetch(`${API_BASE}/pokemon-species/${pokemonId}`);
   if (!spRes.ok) return null;
   const species = await spRes.json();

@@ -112,6 +112,14 @@ body {
   padding-bottom: var(--safe-bottom);
 }
 
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.animate-fade-in {
+  animation: fadeIn 0.5s ease-out forwards;
+}
+
 /* Mobile: bottom nav fixed, content has padding so it doesn't sit under nav */
 @media (max-width: 640px) {
   body {

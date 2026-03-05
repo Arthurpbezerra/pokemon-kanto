@@ -86,12 +86,14 @@ export function stopSfx(key: SfxKey | string): void {
 
 /** Call from a user gesture (e.g. first click). Unlocks audio and starts preloading .mp3 files. */
 export function unlockAudio(): void {
-  if (audioUnlocked || muted) return;
+  if (audioUnlocked) return;
   audioUnlocked = true;
-  const silentWav = "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=";
-  const a = new Audio(silentWav);
-  a.volume = 0;
-  a.play().catch(() => {});
+  if (!muted) {
+    const silentWav = "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=";
+    const a = new Audio(silentWav);
+    a.volume = 0;
+    a.play().catch(() => {});
+  }
 
   SOUND_KEYS.forEach((key) => {
     const el = new Audio(getPath(key, "mp3"));
@@ -105,12 +107,15 @@ export function unlockAudio(): void {
 export function playSfx(key: SfxKey | string): void {
   if (muted) return;
   const k = key as string;
-  if (stopTimeouts[k]) {
-    clearTimeout(stopTimeouts[k]);
-    delete stopTimeouts[k];
-  }
   const pre = preloaded[k];
   if (pre && pre.readyState >= 2) {
+    if (AUTO_STOP_KEYS.includes(k as any) && !pre.paused && pre.currentTime > 0.1) {
+      return;
+    }
+    if (stopTimeouts[k]) {
+      clearTimeout(stopTimeouts[k]);
+      delete stopTimeouts[k];
+    }
     pre.currentTime = 0;
     pre.volume = VOLUME;
     pre.play().catch(() => {});
@@ -119,6 +124,10 @@ export function playSfx(key: SfxKey | string): void {
       stopTimeouts[k] = setTimeout(() => stopSfx(k), stopMs);
     }
     return;
+  }
+  if (stopTimeouts[k]) {
+    clearTimeout(stopTimeouts[k]);
+    delete stopTimeouts[k];
   }
   const pathBase = `${basePath}/${key}`;
   tryPlay(`${pathBase}.mp3`).catch(() => tryPlay(`${pathBase}.mp4`).catch(() => {}));
@@ -130,17 +139,41 @@ export function playSfx(key: SfxKey | string): void {
 
 export function playMusic(url: string, loop = true): void {
   if (muted) return;
-  try {
-    const audio = new Audio(url);
-    audio.volume = 0.4;
-    audio.loop = loop;
-    audio.play().catch(() => {});
-    (window as any).__bgm = audio;
-  } catch {}
+  if (!audioUnlocked) unlockAudio();
+  if (!bgm) {
+    bgm = new Audio();
+    bgm.volume = 0.4;
+  }
+  currentMusicUrl = url;
+  bgm.pause();
+  bgm.currentTime = 0;
+  bgm.loop = loop;
+  bgm.src = url;
+  bgm.play().catch(() => {});
+}
+
+/** Singleton BGM: uma única instância de áudio para toda a aplicação. */
+let bgm: HTMLAudioElement | null = null;
+let currentMusicUrl: string | null = null;
+
+/** Toca uma música por URL. Usa instância única; para qualquer BGM anterior. */
+export function playMusicWhenReady(url: string, loop = false): void {
+  if (muted) return;
+  if (!audioUnlocked) unlockAudio();
+  if (!bgm) {
+    bgm = new Audio();
+    bgm.volume = 0.5;
+  }
+  if (!loop && currentMusicUrl === url && !bgm.paused) return;
+  currentMusicUrl = url;
+  bgm.pause();
+  bgm.currentTime = 0;
+  bgm.loop = loop;
+  bgm.src = url;
+  bgm.play().catch(() => {});
 }
 
 export function stopMusic(): void {
-  const bgm = (window as any).__bgm as HTMLAudioElement | undefined;
   if (bgm) {
     bgm.pause();
     bgm.currentTime = 0;

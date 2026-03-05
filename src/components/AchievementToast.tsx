@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import * as sound from "../audio/sound";
 
 export type AchievementData = {
@@ -19,13 +19,17 @@ export default function AchievementToast({
   onClose: () => void;
 }) {
   const [visible, setVisible] = useState(false);
+  const soundPlayedRef = useRef(false);
 
   useEffect(() => {
-    if (data.type === "gym") sound.playSfx("gym-victory");
-    else sound.playSfx("achievement");
+    if (!soundPlayedRef.current) {
+      soundPlayedRef.current = true;
+      if (data.type === "gym") sound.playSfx("gym-victory");
+      else sound.playSfx("achievement");
+    }
     const t = setTimeout(() => setVisible(true), 50);
     return () => clearTimeout(t);
-  }, []);
+  }, [data.type]);
 
   useEffect(() => {
     const t = setTimeout(() => {

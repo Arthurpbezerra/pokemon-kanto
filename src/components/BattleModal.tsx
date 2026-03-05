@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { calculateDamage, calculateDamageWithTypes, whoGoesFirst } from "../engine/battle";
 import { getMoveData, formatMoveName, xpForDefeatingEnemy } from "../api/pokeapi";
 
@@ -54,6 +54,8 @@ export default function BattleModal({ playerPokemon, enemyPokemon, playerTeam, o
   const [busy, setBusy] = useState(false);
   const [showSwitchPicker, setShowSwitchPicker] = useState(false);
   const [faintedLeadId, setFaintedLeadId] = useState<number | null>(null);
+  const enemyHpAfterFirstAttackRef = useRef<number>(0);
+  const playerHpAfterFirstAttackRef = useRef<number>(0);
 
   // Do NOT sync from props after mount: parent's enemyPokemon always has full HP.
   // Resyncing would overwrite local battle damage and make the enemy "heal" on every parent re-render.
@@ -82,6 +84,8 @@ export default function BattleModal({ playerPokemon, enemyPokemon, playerTeam, o
   const doMove = async (moveName?: string) => {
     if (busy) return;
     setBusy(true);
+    enemyHpAfterFirstAttackRef.current = e.hp;
+    playerHpAfterFirstAttackRef.current = p.hp;
     // resolve player's move data
     let playerMove: any = { name: moveName ?? "Attack", power: 40, accuracy: 100, damage_class: "physical", type: "normal" };
     if (moveName) {
@@ -115,6 +119,7 @@ export default function BattleModal({ playerPokemon, enemyPokemon, playerTeam, o
           : { ...calculateDamage(atkEff as any, defEff as any, mvPower, mvClass ?? "physical", p.level ?? 5), effectiveness: "normal" as const };
         setE((cur) => {
           const newHp = Math.max(0, cur.hp - res.damage);
+          enemyHpAfterFirstAttackRef.current = newHp;
           pushLog(`${p.name} used ${mvName ?? "Attack"} and dealt ${res.damage}${res.isCrit ? " (CRIT)" : ""}.${effectivenessMsg(res.effectiveness)}`);
           return { ...cur, hp: newHp };
         });
@@ -130,6 +135,7 @@ export default function BattleModal({ playerPokemon, enemyPokemon, playerTeam, o
           : { ...calculateDamage(atkEffE as any, defEffP as any, mvPower, mvClass ?? "physical", e.level ?? 5), effectiveness: "normal" as const };
         setP((cur) => {
           const newHp = Math.max(0, cur.hp - res.damage);
+          playerHpAfterFirstAttackRef.current = newHp;
           const updated = { ...cur, hp: newHp };
           pushLog(`${e.name} used ${mvName ?? "Attack"} and dealt ${res.damage}${res.isCrit ? " (CRIT)" : ""}.${effectivenessMsg(res.effectiveness)}`);
           return updated;
@@ -201,18 +207,17 @@ export default function BattleModal({ playerPokemon, enemyPokemon, playerTeam, o
       } else pushLog(`${e.name} used ${enemyMove.name} but it missed!`);
     }
 
-    // wait a bit then second attack if still alive
+    // wait a bit then second attack if still alive (use refs: state e/p are stale in closure)
     await sleep(900);
-    const enemyAlive = (e.hp > 0);
-    const playerAlive = (p.hp > 0);
+    const enemyAlive = attackerFirst === "player" ? enemyHpAfterFirstAttackRef.current > 0 : (e.hp > 0);
+    const playerAlive = attackerFirst === "enemy" ? playerHpAfterFirstAttackRef.current > 0 : (p.hp > 0);
     // read latest p and e via closures - use state values
     let latestP = p;
     let latestE = e;
-    // sync from states (they'll be updated shortly)
-    // perform second attack
+    // perform second attack only if defender did not faint
     if (attackerFirst === "player") {
-      // enemy retaliates if alive - select enemy move
-      if ((e.hp - 0) > 0) {
+      // enemy retaliates only if still alive (player attacked first; enemy HP was updated in setE)
+      if (enemyHpAfterFirstAttackRef.current > 0) {
         const enemyMoveName = (e.moves && e.moves.length > 0) ? e.moves[Math.floor(Math.random() * e.moves.length)] : undefined;
         let enemyMove: any = { name: enemyMoveName ?? "Attack", power: 35, accuracy: 100, damage_class: "physical", type: "normal" };
         if (enemyMoveName) {
@@ -227,8 +232,8 @@ export default function BattleModal({ playerPokemon, enemyPokemon, playerTeam, o
         else pushLog(`${e.name} used ${enemyMove.name} but it missed!`);
       }
     } else {
-      // player retaliates if alive
-      if ((p.hp - 0) > 0) {
+      // player retaliates only if still alive (enemy attacked first; player HP was updated in setP)
+      if (playerHpAfterFirstAttackRef.current > 0) {
         const playerHit = (playerMove.accuracy ?? 100) === null ? true : (Math.random() * 100) < (playerMove.accuracy ?? 100);
         if (playerHit) applyAttack(true, playerMove.power ?? 40, playerMove.name, playerMove.damage_class ?? "physical", playerMove.type, e.types);
         else pushLog(`${p.name} used ${playerMove.name} but it missed!`);
