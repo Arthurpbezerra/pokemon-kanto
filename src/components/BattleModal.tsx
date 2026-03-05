@@ -18,6 +18,13 @@ type PokemonInstance = {
 
 export type BattleEndResult = { winner: "player" | "enemy" | "run"; xpGain?: number; playerFinalHp?: number; enemyFinalHp?: number };
 
+type PvpBattleState = {
+  log: string[];
+  status: "waiting_moves" | "resolving" | "ended";
+  myMoveSubmitted?: boolean;
+  winner?: "challenger" | "defender" | null;
+};
+
 type Props = {
   playerPokemon: PokemonInstance;
   enemyPokemon: PokemonInstance;
@@ -29,9 +36,12 @@ type Props = {
   onGrantXp?: (xp: number) => void;
   isPvP?: boolean;
   isTrainerBattle?: boolean;
+  pvpBattleState?: PvpBattleState;
+  onPvpSubmitMove?: (moveName: string) => void;
+  pvpYouWon?: boolean;
 };
 
-export default function BattleModal({ playerPokemon, enemyPokemon, playerTeam, onEnd, onPlayerUpdate, onSwitchPokemon, onCapture, isPvP, isTrainerBattle }: Props) {
+export default function BattleModal({ playerPokemon, enemyPokemon, playerTeam, onEnd, onPlayerUpdate, onSwitchPokemon, onCapture, onGrantXp, isPvP, isTrainerBattle, pvpBattleState, onPvpSubmitMove, pvpYouWon }: Props) {
   const [p, setP] = useState<PokemonInstance>(() => ({ ...playerPokemon }));
   const [e, setE] = useState<PokemonInstance>(() => ({ ...enemyPokemon }));
   const [showMoves, setShowMoves] = useState(false);
@@ -223,19 +233,19 @@ export default function BattleModal({ playerPokemon, enemyPokemon, playerTeam, o
     // wait and check for faint
     await sleep(900);
     // read final states
-    let finalP = null;
-    let finalE = null;
-    // Use functional gets
+    let finalP: PokemonInstance | null = null;
+    let finalE: PokemonInstance | null = null;
     setP((curP) => { finalP = curP; return curP; });
     setE((curE) => { finalE = curE; return curE; });
-    // small delay to ensure states settled
     await new Promise((r) => setTimeout(r, 50));
 
     if ((finalE && finalE.hp <= 0) || (e.hp <= 0)) {
       pushLog(`${e.name} fainted!`);
       const xpGain = (isPvP && !isTrainerBattle) ? undefined : xpForDefeatingEnemy(e.level ?? 1);
-      const playerHp = (finalP ?? p).hp;
-      const enemyHp = (finalE ?? e).hp;
+      const curP = (finalP ?? p) as PokemonInstance;
+      const curE = (finalE ?? e) as PokemonInstance;
+      const playerHp = curP.hp;
+      const enemyHp = curE.hp;
       setBusy(false);
       onEnd({ winner: "player", xpGain, ...(isPvP && { playerFinalHp: playerHp, enemyFinalHp: Math.max(0, enemyHp) }) });
       return;
@@ -243,13 +253,15 @@ export default function BattleModal({ playerPokemon, enemyPokemon, playerTeam, o
 
     if ((finalP && finalP.hp <= 0) || (p.hp <= 0)) {
       pushLog(`${p.name} fainted!`);
-      try { onPlayerUpdate(finalP ?? p); } catch {}
-      const playerHp = (finalP ?? p).hp;
-      const enemyHp = (finalE ?? e).hp;
+      const curP = (finalP ?? p) as PokemonInstance;
+      const curE = (finalE ?? e) as PokemonInstance;
+      try { onPlayerUpdate(curP); } catch {}
+      const playerHp = curP.hp;
+      const enemyHp = curE.hp;
       setBusy(false);
-      const canSwitch = playerTeam && onSwitchPokemon && playerTeam.some((m) => m.hp > 0 && m.id !== (finalP ?? p).id);
+      const canSwitch = playerTeam && onSwitchPokemon && playerTeam.some((m) => m.hp > 0 && m.id !== curP.id);
       if (canSwitch) {
-        setFaintedLeadId((finalP ?? p).id);
+        setFaintedLeadId(curP.id);
         setShowSwitchPicker(true);
         return;
       }
@@ -263,7 +275,7 @@ export default function BattleModal({ playerPokemon, enemyPokemon, playerTeam, o
   const run = () => {
     pushLog((isPvP || isTrainerBattle) ? "You forfeited!" : "You ran away!");
     try { onPlayerUpdate(p); } catch {}
-    onEnd({ winner: "run", ...(isPvP && { playerFinalHp: p.hp, enemyFinalHp: e.hp }) });
+    onEnd({ winner: "run", ...(isPvP && { playerFinalHp: displayP.hp, enemyFinalHp: displayE.hp }) });
   };
 
   const hpColor = (cur: number, max: number) => {
@@ -276,6 +288,30 @@ export default function BattleModal({ playerPokemon, enemyPokemon, playerTeam, o
   const switchOptions = (playerTeam ?? [])
     .map((m, i) => ({ mon: m, teamIndex: i }))
     .filter(({ mon }) => mon.hp > 0 && mon.id !== p.id);
+
+  const isPvPMode = isPvP && pvpBattleState != null;
+  const displayP = isPvPMode ? playerPokemon : p;
+  const displayE = isPvPMode ? enemyPokemon : e;
+  const displayLog = isPvPMode && pvpBattleState?.log ? pvpBattleState.log : log;
+  const pvpEnded = isPvPMode && pvpBattleState?.status === "ended";
+  const pvpWaiting = isPvPMode && pvpBattleState?.status === "waiting_moves";
+  const pvpMyMoveSubmitted = pvpBattleState?.myMoveSubmitted === true;
+
+  if (isPvPMode && pvpEnded) {
+    return (
+      <div className="fixed inset-0 z-50 flex flex-col modal-backdrop overflow-y-auto p-2 sm:p-4 safe-area-bottom">
+        <div className="card-panel w-full max-w-2xl mx-auto p-6 text-white flex flex-col items-center justify-center border-2 border-amber-500/30">
+          <div className="text-2xl font-bold mb-4">{pvpYouWon ? "You win!" : "You lose!"}</div>
+          <div className="mb-4 space-y-1 text-sm text-gray-300">
+            {displayLog.slice(-5).map((line, i) => (
+              <div key={i}>{line}</div>
+            ))}
+          </div>
+          <button type="button" className="pixel-btn pixel-btn-primary" onClick={() => onEnd({ winner: pvpYouWon ? "player" : "enemy", playerFinalHp: displayP.hp, enemyFinalHp: displayE.hp })}>Close</button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col modal-backdrop overflow-y-auto p-2 sm:p-4 safe-area-bottom">
@@ -303,33 +339,35 @@ export default function BattleModal({ playerPokemon, enemyPokemon, playerTeam, o
         <>
         <div className="flex flex-col sm:flex-row sm:justify-between gap-3 sm:gap-4 flex-shrink-0">
           <div className="flex items-center gap-2 sm:gap-3">
-            <img src={p.sprite} alt={p.name} className="w-16 h-16 sm:w-20 sm:h-20 flex-shrink-0" />
+            <img src={displayP.sprite} alt={displayP.name} className="w-16 h-16 sm:w-20 sm:h-20 flex-shrink-0" />
             <div className="min-w-0 flex-1">
               <div className="text-xs sm:text-sm text-gray-300">You</div>
-              <div className="font-bold text-xs sm:text-base truncate">{p.name} Lv {p.level}</div>
+              <div className="font-bold text-xs sm:text-base truncate">{displayP.name} Lv {displayP.level}</div>
               <div className="w-full max-w-40 h-2.5 sm:h-3 hp-bar bg-gray-700 mt-1">
-                <div className={`hp-bar-fill ${hpColor(p.hp, p.maxHp)} h-2.5 sm:h-3`} style={{ width: `${Math.max(0, (p.hp / p.maxHp) * 100)}%` }} />
+                <div className={`hp-bar-fill ${hpColor(displayP.hp, displayP.maxHp)} h-2.5 sm:h-3`} style={{ width: `${Math.max(0, (displayP.hp / displayP.maxHp) * 100)}%` }} />
               </div>
-              <div className="text-[10px] sm:text-xs mt-0.5">{p.hp}/{p.maxHp}</div>
+              <div className="text-[10px] sm:text-xs mt-0.5">{displayP.hp}/{displayP.maxHp}</div>
             </div>
           </div>
           <div className="flex items-center gap-2 sm:gap-3 sm:justify-end">
-            <img src={e.sprite} alt={e.name} className="w-16 h-16 sm:w-20 sm:h-20 flex-shrink-0 order-2 sm:order-1" />
+            <img src={displayE.sprite} alt={displayE.name} className="w-16 h-16 sm:w-20 sm:h-20 flex-shrink-0 order-2 sm:order-1" />
             <div className="min-w-0 flex-1 sm:text-right">
               <div className="text-xs sm:text-sm text-gray-300">Enemy</div>
-              <div className="font-bold text-xs sm:text-base truncate">{e.name} Lv {e.level}</div>
+              <div className="font-bold text-xs sm:text-base truncate">{displayE.name} Lv {displayE.level}</div>
               <div className="w-full max-w-40 h-2.5 sm:h-3 hp-bar bg-gray-700 mt-1 ml-auto sm:ml-0">
-                <div className={`hp-bar-fill ${hpColor(e.hp, e.maxHp)} h-2.5 sm:h-3`} style={{ width: `${Math.max(0, (e.hp / e.maxHp) * 100)}%` }} />
+                <div className={`hp-bar-fill ${hpColor(displayE.hp, displayE.maxHp)} h-2.5 sm:h-3`} style={{ width: `${Math.max(0, (displayE.hp / displayE.maxHp) * 100)}%` }} />
               </div>
-              <div className="text-[10px] sm:text-xs mt-0.5">{e.hp}/{e.maxHp}</div>
+              <div className="text-[10px] sm:text-xs mt-0.5">{displayE.hp}/{displayE.maxHp}</div>
             </div>
           </div>
         </div>
 
         <div className="mt-3 sm:mt-4 flex-shrink-0">
-          {!showMoves ? (
+          {pvpWaiting && pvpMyMoveSubmitted ? (
+            <div className="p-3 rounded-lg bg-amber-900/30 border border-amber-600/50 text-center text-sm text-amber-200">Waiting for opponent...</div>
+          ) : !showMoves ? (
             <div className={`grid gap-2 ${(isPvP || isTrainerBattle) ? "grid-cols-2" : "grid-cols-2 sm:grid-cols-2"}`}>
-              <button className="pixel-btn pixel-btn-primary w-full" onClick={() => setShowMoves(true)} disabled={busy}>⚔ Attack</button>
+              <button className="pixel-btn pixel-btn-primary w-full" onClick={() => setShowMoves(true)} disabled={busy || (pvpWaiting && pvpMyMoveSubmitted)}>⚔ Attack</button>
               <button className="pixel-btn w-full" onClick={run} disabled={busy}>{(isPvP || isTrainerBattle) ? "Forfeit" : "Run"}</button>
               {!(isPvP || isTrainerBattle) && <button className="pixel-btn w-full col-span-2 sm:col-span-1" onClick={async () => {
                 if (!onCapture) return;
@@ -339,31 +377,37 @@ export default function BattleModal({ playerPokemon, enemyPokemon, playerTeam, o
                 console.log("BattleModal: attempting normal capture");
                 try {
                   const ok = await Promise.resolve(onCapture(false));
-                  if (ok) {
+                  if (Boolean(ok)) {
                     pushLog("Gotcha!");
                     await sleep(700);
                     try { onPlayerUpdate({ ...p, hp: p.hp }); } catch {}
                     onEnd({ winner: "player" });
                   } else {
                     pushLog("It broke free!");
-              // enemy gets a full attack turn after failed capture
-              await sleep(400);
-              // choose enemy move
-              const enemyMoveName2 = (e.moves && e.moves.length > 0) ? e.moves[Math.floor(Math.random() * e.moves.length)] : undefined;
-              let enemyMove2: any = { name: enemyMoveName2 ?? "Attack", power: 35, accuracy: 100, damage_class: "physical", type: "normal" };
-              if (enemyMoveName2) {
-                try {
-                  enemyMove2 = await getMoveData(enemyMoveName2);
-                } catch {
-                  enemyMove2 = { name: enemyMoveName2, power: 35, accuracy: 100, damage_class: "physical", type: "normal" };
-                }
-              }
-              const enemyHit2 = (enemyMove2.accuracy ?? 100) === null ? true : (Math.random() * 100) < (enemyMove2.accuracy ?? 100);
-              if (enemyHit2) {
-                applyAttack(false, enemyMove2.power ?? 35, enemyMove2.name, enemyMove2.damage_class ?? "physical", enemyMove2.type, p.types);
-              } else {
-                pushLog(`${e.name} used ${enemyMove2.name} but it missed!`);
-              }
+                    await sleep(400);
+                    const enemyMoveName2 = (e.moves && e.moves.length > 0) ? e.moves[Math.floor(Math.random() * e.moves.length)] : undefined;
+                    let enemyMove2: any = { name: enemyMoveName2 ?? "Attack", power: 35, accuracy: 100, damage_class: "physical", type: "normal" };
+                    if (enemyMoveName2) {
+                      try {
+                        enemyMove2 = await getMoveData(enemyMoveName2);
+                      } catch {
+                        enemyMove2 = { name: enemyMoveName2, power: 35, accuracy: 100, damage_class: "physical", type: "normal" };
+                      }
+                    }
+                    const enemyHit2 = (enemyMove2.accuracy ?? 100) === null ? true : (Math.random() * 100) < (enemyMove2.accuracy ?? 100);
+                    if (enemyHit2) {
+                      const atkBaseE = e.stats ?? { attack: 5, defense: 5, speed: 5 };
+                      const defBaseP = p.stats ?? { attack: 5, defense: 5, speed: 5 };
+                      const defenderTy = p.types ?? ["normal"];
+                      const res = calculateDamageWithTypes(atkBaseE as any, defBaseP as any, enemyMove2.power ?? 35, enemyMove2.damage_class ?? "physical", e.level ?? 5, enemyMove2.type, defenderTy);
+                      setP((cur) => {
+                        const newHp = Math.max(0, cur.hp - res.damage);
+                        pushLog(`${e.name} used ${enemyMove2.name} and dealt ${res.damage}.`);
+                        return { ...cur, hp: newHp };
+                      });
+                    } else {
+                      pushLog(`${e.name} used ${enemyMove2.name} but it missed!`);
+                    }
                   }
                 } catch (err) {
                   console.error("capture error", err);
@@ -379,7 +423,7 @@ export default function BattleModal({ playerPokemon, enemyPokemon, playerTeam, o
                 pushLog("Throwing Ultra Ball...");
                 try {
                   const ok = await Promise.resolve(onCapture(true));
-                  if (ok) {
+                  if (Boolean(ok)) {
                     pushLog("Gotcha with Ultra Ball!");
                     await sleep(700);
                     try { onPlayerUpdate({ ...p, hp: p.hp }); } catch {}
@@ -397,8 +441,23 @@ export default function BattleModal({ playerPokemon, enemyPokemon, playerTeam, o
             </div>
           ) : (
             <div className="grid grid-cols-2 gap-2">
-              {(p.moves ?? []).slice(0,4).map((m) => (
-                <button key={m} className="pixel-btn w-full" onClick={() => { doMove(m); setShowMoves(false); }} disabled={busy}>{formatMoveName(m)}</button>
+              {(displayP.moves ?? []).slice(0, 4).map((m) => (
+                <button
+                  key={m}
+                  className="pixel-btn w-full"
+                  onClick={() => {
+                    if (isPvPMode && onPvpSubmitMove) {
+                      onPvpSubmitMove(m);
+                      setShowMoves(false);
+                    } else {
+                      doMove(m);
+                      setShowMoves(false);
+                    }
+                  }}
+                  disabled={busy}
+                >
+                  {formatMoveName(m)}
+                </button>
               ))}
               <button className="pixel-btn w-full" onClick={() => setShowMoves(false)} disabled={busy}>Back</button>
             </div>
@@ -408,7 +467,7 @@ export default function BattleModal({ playerPokemon, enemyPokemon, playerTeam, o
         <div className="mt-3 sm:mt-4 bg-black/40 p-3 rounded-lg border border-gray-600/50 flex-1 min-h-0 flex flex-col">
           <div className="text-xs font-bold text-amber-300/90 mb-2 flex-shrink-0">Battle Log</div>
           <div className="h-20 sm:h-28 overflow-y-auto text-[10px] sm:text-sm flex-1 min-h-0 space-y-1">
-            {log.map((l, i) => (
+            {displayLog.map((l, i) => (
               <div key={i} className="break-words py-0.5 px-1 rounded odd:bg-gray-800/50">{l}</div>
             ))}
           </div>

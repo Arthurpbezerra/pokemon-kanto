@@ -49,7 +49,19 @@ const generateCode = () =>
   Math.random().toString(36).slice(2, 8).toUpperCase();
 
 export type PvpRequest = { fromPlayerId: string; toPlayerId: string; type: "battle" | "trade" };
-export type PvpBattle = { challengerId: string; defenderId: string };
+export type PvpBattle = {
+  challengerId: string;
+  defenderId: string;
+  challengerHp?: number;
+  defenderHp?: number;
+  challengerMaxHp?: number;
+  defenderMaxHp?: number;
+  log?: string[];
+  status?: "waiting_moves" | "resolving" | "ended";
+  challengerMove?: string | null;
+  defenderMove?: string | null;
+  winner?: "challenger" | "defender" | null;
+};
 export type PvpTrade = { playerAId: string; playerBId: string; aSelectedIndex: number | null; bSelectedIndex: number | null };
 
 export type GameStateSnapshot = {
@@ -701,8 +713,7 @@ function useGameState(socket: Socket | null) {
     const { fromPlayerId, toPlayerId, type } = pvpRequest;
     setPvpRequest(null);
     if (type === "battle") {
-      setPvpBattle({ challengerId: fromPlayerId, defenderId: toPlayerId });
-      setPhase("battle");
+      if (socket) socket.emit("pvpAccept", { fromPlayerId, toPlayerId });
     } else {
       setPvpTrade({ playerAId: fromPlayerId, playerBId: toPlayerId, aSelectedIndex: null, bSelectedIndex: null });
     }
@@ -1120,22 +1131,34 @@ export default function App() {
           />
         )}
         {game.phase === "battle" && game.pvpBattle && isMyPvPBattle && currentPlayer && (() => {
-          const { challengerId, defenderId } = game.pvpBattle!;
+          const pvp = game.pvpBattle!;
+          const { challengerId, defenderId } = pvp;
           const challenger = game.players.find((p) => p.id === challengerId);
           const defender = game.players.find((p) => p.id === defenderId);
           const myLead = currentPlayer.team[0];
           const theirLead = (socket?.id === challengerId ? defender : challenger)?.team[0];
           if (!myLead || !theirLead) return null;
+          const amChallenger = socket?.id === challengerId;
+          const myHp = amChallenger ? (pvp.challengerHp ?? myLead.hp) : (pvp.defenderHp ?? myLead.hp);
+          const theirHp = amChallenger ? (pvp.defenderHp ?? theirLead.hp) : (pvp.challengerHp ?? theirLead.hp);
+          const myMaxHp = amChallenger ? (pvp.challengerMaxHp ?? myLead.maxHp) : (pvp.defenderMaxHp ?? myLead.maxHp);
+          const theirMaxHp = amChallenger ? (pvp.defenderMaxHp ?? theirLead.maxHp) : (pvp.challengerMaxHp ?? theirLead.maxHp);
           return (
             <BattleModal
               isPvP
-              playerPokemon={myLead}
-              enemyPokemon={theirLead}
+              playerPokemon={{ ...myLead, hp: myHp, maxHp: myMaxHp }}
+              enemyPokemon={{ ...theirLead, hp: theirHp, maxHp: theirMaxHp }}
               playerTeam={currentPlayer.team}
+              pvpBattleState={pvp.status ? { log: pvp.log ?? [], status: pvp.status, winner: pvp.winner, myMoveSubmitted: amChallenger ? pvp.challengerMove != null : pvp.defenderMove != null } : undefined}
+              pvpYouWon={pvp.winner != null && (pvp.winner === "challenger") === amChallenger}
+              onPvpSubmitMove={(moveName) => socket?.emit("pvpSubmitMove", moveName)}
               onSwitchPokemon={(i) => game.updatePlayerLead(currentPlayer.id, i)}
               onEnd={(res) => {
                 sound.stopSfx("battle-start");
                 if (res.playerFinalHp != null && res.enemyFinalHp != null) {
+                  const chHp = amChallenger ? res.playerFinalHp : res.enemyFinalHp;
+                  const defHp = amChallenger ? res.enemyFinalHp : res.playerFinalHp;
+                  if (socket) socket.emit("pvpEnd", { challengerHp: chHp, defenderHp: defHp });
                   game.endPvpBattle(res.playerFinalHp, res.enemyFinalHp);
                 } else {
                   game.endPvpBattle(myLead.hp, theirLead.hp);
