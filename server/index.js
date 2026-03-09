@@ -47,7 +47,11 @@ io.on("connection", (socket) => {
       location: "Pallet Town",
       team: [],
       badges: [],
-      bag: { pokeball: 10, coins: 10 }
+      bag: { pokeball: 10, coins: 10 },
+      wildEncounter: null,
+      encounterLog: [],
+      pendingLearn: null,
+      evolutionNotice: null
     };
 
     const state = createInitialState(code, firstPlayer);
@@ -85,7 +89,11 @@ io.on("connection", (socket) => {
       location: "Pallet Town",
       team: [],
       badges: [],
-      bag: { pokeball: 10, coins: 10 }
+      bag: { pokeball: 10, coins: 10 },
+      wildEncounter: null,
+      encounterLog: [],
+      pendingLearn: null,
+      evolutionNotice: null
     };
     state.players.push(newPlayer);
     socket.join(roomCode);
@@ -103,8 +111,25 @@ io.on("connection", (socket) => {
     if (current?.pvpBattle && current.pvpBattle.status !== "ended") {
       if (!state.pvpBattle || state.phase !== "battle") return;
     }
-    rooms.set(roomCode, state);
-    socket.to(roomCode).emit("state", state);
+    // Merge per-player state so each has independent instance (wildEncounter, encounterLog, pendingLearn, evolutionNotice)
+    const mergedPlayers = (state.players || []).map((p) => {
+      const existing = current.players.find((x) => x.id === p.id);
+      const isSender = p.id === socket.id;
+      return {
+        ...p,
+        wildEncounter: isSender ? (state.wildEncounter ?? null) : (existing?.wildEncounter ?? null),
+        encounterLog: isSender ? (state.encounterLog ?? []) : (existing?.encounterLog ?? []),
+        pendingLearn: isSender ? (state.pendingLearn ?? null) : (existing?.pendingLearn ?? null),
+        evolutionNotice: isSender ? (state.evolutionNotice ?? null) : (existing?.evolutionNotice ?? null)
+      };
+    });
+    const merged = { ...state, players: mergedPlayers };
+    merged.wildEncounter = undefined;
+    merged.encounterLog = undefined;
+    merged.pendingLearn = undefined;
+    merged.evolutionNotice = undefined;
+    rooms.set(roomCode, merged);
+    io.to(roomCode).emit("state", merged);
   });
 
   socket.on("achievement", (data) => {
@@ -170,6 +195,16 @@ io.on("connection", (socket) => {
     io.to(roomCode).emit("state", state);
   });
 
+  function clearPvpForPlayer(state, playerId) {
+    if (state.pvpRequest && (state.pvpRequest.fromPlayerId === playerId || state.pvpRequest.toPlayerId === playerId)) {
+      state.pvpRequest = null;
+    }
+    if (state.pvpBattle && (state.pvpBattle.challengerId === playerId || state.pvpBattle.defenderId === playerId)) {
+      state.pvpBattle = null;
+      state.phase = "map";
+    }
+  }
+
   socket.on("leaveRoom", () => {
     const roomCode = socket.roomCode;
     if (!roomCode) return;
@@ -177,6 +212,7 @@ io.on("connection", (socket) => {
     socket.roomCode = null;
     if (rooms.has(roomCode)) {
       const state = rooms.get(roomCode);
+      clearPvpForPlayer(state, socket.id);
       state.players = state.players.filter((p) => p.id !== socket.id);
       if (state.players.length === 0) rooms.delete(roomCode);
       else io.to(roomCode).emit("state", state);
@@ -187,6 +223,7 @@ io.on("connection", (socket) => {
     const roomCode = socket.roomCode;
     if (roomCode && rooms.has(roomCode)) {
       const state = rooms.get(roomCode);
+      clearPvpForPlayer(state, socket.id);
       state.players = state.players.filter((p) => p.id !== socket.id);
       if (state.players.length === 0) rooms.delete(roomCode);
       else io.to(roomCode).emit("state", state);

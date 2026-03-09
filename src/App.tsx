@@ -49,6 +49,10 @@ type Player = {
   team: Pokemon[];
   badges: string[];
   bag?: { pokeball: number; coins: number };
+  wildEncounter?: null | { pokemon: Pokemon; location: string; triggeredByPlayerId?: string };
+  encounterLog?: string[];
+  pendingLearn?: null | { playerIndex: number; pokemonIndex: number; newMove: string; newLevel: number; remainingMoves?: string[] };
+  evolutionNotice?: null | { playerIndex: number; oldName: string; newName: string };
 };
 
 type Phase = "home" | "lobby" | "starter" | "map" | "encounter" | "battle";
@@ -171,8 +175,10 @@ function useGameState(socket: Socket | null) {
   const [pendingReplaceCapture, setPendingReplaceCapture] = useState<null | { pokemon: Pokemon; playerIndex: number }>(null);
   const skipEmitRef = useRef(false);
   const skipEmitAfterPvpAcceptRef = useRef(false);
+  const stateUpdateTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const myBattleRef = useRef<{ phase: Phase; wildEncounter: typeof wildEncounter }>({ phase: "home", wildEncounter: null });
   const playersLengthRef = useRef(0);
+  const STATE_UPDATE_DEBOUNCE_MS = 120;
   myBattleRef.current = { phase, wildEncounter };
   playersLengthRef.current = players.length;
 
@@ -213,11 +219,12 @@ function useGameState(socket: Socket | null) {
     const someoneJustJoined = s.players != null && s.players.length > playersLengthRef.current;
     const playersWithBag = (s.players ?? []).map((p: Player) => ({ ...p, bag: p.bag ?? { pokeball: INITIAL_POKEBALLS, coins: INITIAL_COINS } }));
     if (inMyBattle && (incomingClearsBattle || someoneJustJoined)) {
+      const my = socket ? playersWithBag.find((p) => p.id === socket.id) : null;
       setPlayers(playersWithBag);
       setCurrentPlayerIndex(s.currentPlayerIndex ?? 0);
-      setEncounterLog(s.encounterLog ?? []);
-      setPendingLearn(s.pendingLearn ?? null);
-      setEvolutionNotice(s.evolutionNotice ?? null);
+      setEncounterLog(my?.encounterLog ?? s.encounterLog ?? []);
+      setPendingLearn(my?.pendingLearn ?? s.pendingLearn ?? null);
+      setEvolutionNotice(my?.evolutionNotice ?? s.evolutionNotice ?? null);
       setPvpRequest(s.pvpRequest ?? null);
       setPvpBattle(s.pvpBattle ?? null);
       setPvpTrade(s.pvpTrade ?? null);
@@ -228,10 +235,11 @@ function useGameState(socket: Socket | null) {
     setRoomCode(s.roomCode || "");
     setPlayers(playersWithBag);
     setCurrentPlayerIndex(s.currentPlayerIndex ?? 0);
-    setWildEncounter(s.wildEncounter ?? null);
-    setEncounterLog(s.encounterLog ?? []);
-    setPendingLearn(s.pendingLearn ?? null);
-    setEvolutionNotice(s.evolutionNotice ?? null);
+    const myPlayer = socket ? playersWithBag.find((p) => p.id === socket.id) : null;
+    setWildEncounter(myPlayer?.wildEncounter ?? s.wildEncounter ?? null);
+    setEncounterLog(myPlayer?.encounterLog ?? s.encounterLog ?? []);
+    setPendingLearn(myPlayer?.pendingLearn ?? s.pendingLearn ?? null);
+    setEvolutionNotice(myPlayer?.evolutionNotice ?? s.evolutionNotice ?? null);
     setPvpRequest(s.pvpRequest ?? null);
     setPvpBattle(s.pvpBattle ?? null);
     setPvpTrade(s.pvpTrade ?? null);
@@ -263,26 +271,44 @@ function useGameState(socket: Socket | null) {
     if (!socket || !roomCode || roomCode === "SOLO") return;
     if (skipEmitRef.current) {
       skipEmitRef.current = false;
+      if (stateUpdateTimeoutRef.current) {
+        clearTimeout(stateUpdateTimeoutRef.current);
+        stateUpdateTimeoutRef.current = null;
+      }
       return;
     }
     if (skipEmitAfterPvpAcceptRef.current) {
       skipEmitAfterPvpAcceptRef.current = false;
+      if (stateUpdateTimeoutRef.current) {
+        clearTimeout(stateUpdateTimeoutRef.current);
+        stateUpdateTimeoutRef.current = null;
+      }
       return;
     }
-    const snapshot: GameStateSnapshot = {
-      phase,
-      roomCode,
-      players,
-      currentPlayerIndex,
-      wildEncounter,
-      encounterLog,
-      pendingLearn,
-      evolutionNotice,
-      pvpRequest,
-      pvpBattle,
-      pvpTrade
+    if (stateUpdateTimeoutRef.current) clearTimeout(stateUpdateTimeoutRef.current);
+    stateUpdateTimeoutRef.current = setTimeout(() => {
+      stateUpdateTimeoutRef.current = null;
+      const snapshot: GameStateSnapshot = {
+        phase,
+        roomCode,
+        players,
+        currentPlayerIndex,
+        wildEncounter,
+        encounterLog,
+        pendingLearn,
+        evolutionNotice,
+        pvpRequest,
+        pvpBattle,
+        pvpTrade
+      };
+      socket.emit("stateUpdate", snapshot);
+    }, STATE_UPDATE_DEBOUNCE_MS);
+    return () => {
+      if (stateUpdateTimeoutRef.current) {
+        clearTimeout(stateUpdateTimeoutRef.current);
+        stateUpdateTimeoutRef.current = null;
+      }
     };
-    socket.emit("stateUpdate", snapshot);
   }, [socket, roomCode, phase, players, currentPlayerIndex, wildEncounter, encounterLog, pendingLearn, evolutionNotice, pvpRequest, pvpBattle, pvpTrade]);
 
   const addPlayer = (name: string) => {
@@ -519,7 +545,12 @@ function useGameState(socket: Socket | null) {
 
   const attackWild = async (moveName?: string) => {
     if (!wildEncounter) return;
-    const player = players[currentPlayerIndex];
+    // In multiplayer use the player who triggered this encounter, not shared currentPlayerIndex
+    const playerIdx = wildEncounter.triggeredByPlayerId != null
+      ? players.findIndex((p) => p.id === wildEncounter.triggeredByPlayerId)
+      : currentPlayerIndex;
+    if (playerIdx < 0) return;
+    const player = players[playerIdx];
     const lead = player.team[0];
     if (!lead) return;
     let power = 5;
@@ -547,8 +578,7 @@ function useGameState(socket: Socket | null) {
       const updated = { ...we, pokemon: { ...we.pokemon, hp: newHp } };
       return updated;
     });
-    // grant small xp to lead
-    const playerIdx = currentPlayerIndex;
+    // grant small xp to lead (playerIdx already set above from encounter owner)
     const playerState = players[playerIdx];
     if (playerState && playerState.team[0]) {
       const lead = playerState.team[0];
@@ -651,18 +681,19 @@ function useGameState(socket: Socket | null) {
     }
     const effMsg = typeMult >= 2 ? " It's super effective!" : typeMult <= 0.5 && typeMult > 0 ? " It's not very effective..." : typeMult === 0 ? " It doesn't affect the target." : "";
     setEncounterLog((l) => [`You used ${moveName ?? "Tackle"} and dealt ${dmg} damage.${effMsg}`, ...l].slice(0, 6));
-    // wild retaliates if still alive
+    // wild retaliates if still alive (use same player index as attacker)
+    const battlePlayerIdx = playerIdx;
     setTimeout(() => {
       setWildEncounter((we) => {
         if (!we) return we;
         if (we.pokemon.hp <= 0) return we;
         const wildAtk = we.pokemon.stats?.attack ?? 5;
-        const playerDef = players[currentPlayerIndex].team[0].stats?.defense ?? 5;
+        const playerDef = players[battlePlayerIdx]?.team[0]?.stats?.defense ?? 5;
         const wildDmg = Math.max(1, Math.floor((wildAtk / playerDef) * 4 * (Math.random() * 0.4 + 0.8)));
         // apply damage to player's lead
         setPlayers((ps) =>
           ps.map((pl, idx) => {
-            if (idx !== currentPlayerIndex) return pl;
+            if (idx !== battlePlayerIdx) return pl;
             if (!pl.team[0]) return pl;
             const newHp = Math.max(0, (pl.team[0].hp ?? pl.team[0].maxHp) - wildDmg);
             let team0 = { ...pl.team[0], hp: newHp };
