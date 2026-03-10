@@ -92,7 +92,11 @@ export type GameStateSnapshot = {
 
 const STARTER_IDS = [1, 4, 7];
 
-const LOCATIONS: Record<string, { type: "town" | "grass" | "water" | "cave"; connections: string[]; wildPool?: number[]; gym?: string | null; x: number; y: number }> = {
+/** Ordem canônica dos 8 ginásios de Kanto (para contagem e Liga). */
+const KANTO_GYM_LEADERS = ["Brock", "Misty", "Lt. Surge", "Erika", "Koga", "Sabrina", "Blaine", "Giovanni"] as const;
+const BADGES_REQUIRED_FOR_LEAGUE = 8;
+
+const LOCATIONS: Record<string, { type: "town" | "grass" | "water" | "cave"; connections: string[]; wildPool?: number[]; gym?: string | null; league?: boolean; x: number; y: number }> = {
   "Pallet Town": { type: "town", connections: ["Route 1"], gym: null, x: 18, y: 70 },
   "Route 1": { type: "grass", connections: ["Pallet Town", "Viridian City"], wildPool: [16, 19, 21], gym: null, x: 18, y: 58 },
   "Viridian City": { type: "town", connections: ["Route 1", "Route 2"], gym: null, x: 18, y: 44 },
@@ -128,7 +132,7 @@ const LOCATIONS: Record<string, { type: "town" | "grass" | "water" | "cave"; con
   "Saffron City": { type: "town", connections: ["Celadon City", "Route 6"], gym: "Sabrina", x: 66, y: 48 },
   "Route 6": { type: "grass", connections: ["Saffron City", "Vermilion City"], wildPool: [60, 118], gym: null, x: 72, y: 44 },
   "Viridian Gym": { type: "town", connections: ["Viridian City"], gym: "Giovanni", x: 18, y: 36 },
-  "Indigo Plateau": { type: "town", connections: ["Viridian Gym"], gym: null, x: 28, y: 10 }
+  "Indigo Plateau": { type: "town", connections: ["Viridian Gym"], gym: null, league: true, x: 28, y: 10 }
 };
 
 const GYM_LEADER_SPRITES: Record<string, string> = {
@@ -139,8 +143,22 @@ const GYM_LEADER_SPRITES: Record<string, string> = {
   "Koga": "https://play.pokemonshowdown.com/sprites/trainers/gen1/koga.png",
   "Sabrina": "https://play.pokemonshowdown.com/sprites/trainers/gen1/sabrina.png",
   "Blaine": "https://play.pokemonshowdown.com/sprites/trainers/gen1/blaine.png",
-  "Giovanni": "https://play.pokemonshowdown.com/sprites/trainers/gen1/giovanni.png"
+  "Giovanni": "https://play.pokemonshowdown.com/sprites/trainers/gen1/giovanni.png",
+  "Lorelei": "https://play.pokemonshowdown.com/sprites/trainers/gen1/lorelei.png",
+  "Bruno": "https://play.pokemonshowdown.com/sprites/trainers/gen1/bruno.png",
+  "Agatha": "https://play.pokemonshowdown.com/sprites/trainers/gen1/agatha.png",
+  "Lance": "https://play.pokemonshowdown.com/sprites/trainers/gen1/lance.png",
+  "Champion": "https://play.pokemonshowdown.com/sprites/trainers/gen1/blue.png"
 };
+
+/** Elite Four + Champion para a Liga (Indigo Plateau). */
+const LEAGUE_TRAINERS: { name: string; team: { id: number; level: number }[] }[] = [
+  { name: "Lorelei", team: [{ id: 87, level: 56 }, { id: 91, level: 56 }] },   // Dewgong, Cloyster
+  { name: "Bruno", team: [{ id: 95, level: 56 }, { id: 68, level: 58 }] },     // Onix, Machamp
+  { name: "Agatha", team: [{ id: 94, level: 58 }, { id: 42, level: 56 }] },     // Gengar, Golbat
+  { name: "Lance", team: [{ id: 130, level: 60 }, { id: 148, level: 58 }] },   // Gyarados, Dragonair
+  { name: "Champion", team: [{ id: 18, level: 61 }, { id: 65, level: 63 }, { id: 59, level: 61 }] }  // Pidgeot, Alakazam, Arcanine
+];
 
 const LOCATION_TYPE_LABELS: Record<string, { icon: string; label: string; bg: string }> = {
   town: { icon: "🏠", label: "City", bg: "bg-amber-900/50" },
@@ -867,26 +885,30 @@ function useGameState(socket: Socket | null) {
   const executeTrade = () => {
     if (!pvpTrade || pvpTrade.aSelectedIndex == null || pvpTrade.bSelectedIndex == null) return;
     const { playerAId, playerBId, aSelectedIndex, bSelectedIndex } = pvpTrade;
-    setPlayers((ps) => {
-      const a = ps.find((p) => p.id === playerAId);
-      const b = ps.find((p) => p.id === playerBId);
-      if (!a || !b || a.team[aSelectedIndex] == null || b.team[bSelectedIndex] == null) return ps;
-      const monA = a.team[aSelectedIndex];
-      const monB = b.team[bSelectedIndex];
-      return ps.map((pl) => {
-        if (pl.id === playerAId) {
-          const newTeam = pl.team.slice();
-          newTeam[aSelectedIndex] = monB;
-          return { ...pl, team: newTeam };
-        }
-        if (pl.id === playerBId) {
-          const newTeam = pl.team.slice();
-          newTeam[bSelectedIndex] = monA;
-          return { ...pl, team: newTeam };
-        }
-        return pl;
+    if (socket && roomCode && roomCode !== "SOLO") {
+      socket.emit("tradeConfirm", { playerAId, playerBId, aSelectedIndex, bSelectedIndex });
+    } else {
+      setPlayers((ps) => {
+        const a = ps.find((p) => p.id === playerAId);
+        const b = ps.find((p) => p.id === playerBId);
+        if (!a || !b || a.team[aSelectedIndex] == null || b.team[bSelectedIndex] == null) return ps;
+        const monA = a.team[aSelectedIndex];
+        const monB = b.team[bSelectedIndex];
+        return ps.map((pl) => {
+          if (pl.id === playerAId) {
+            const newTeam = pl.team.slice();
+            newTeam[aSelectedIndex] = monB;
+            return { ...pl, team: newTeam };
+          }
+          if (pl.id === playerBId) {
+            const newTeam = pl.team.slice();
+            newTeam[bSelectedIndex] = monA;
+            return { ...pl, team: newTeam };
+          }
+          return pl;
+        });
       });
-    });
+    }
     setPvpTrade(null);
   };
 
@@ -961,9 +983,11 @@ export default function App() {
   const [socket, setSocket] = useState<Socket | null>(null);
   const game = useGameState(socket);
   const [starters, setStarters] = useState<any[] | null>(null);
-  const [cityModal, setCityModal] = useState<null | { name: string; description?: string; gym?: string | null }>(null);
+  const [cityModal, setCityModal] = useState<null | { name: string; description?: string; gym?: string | null; league?: boolean }>(null);
   const [gymBattle, setGymBattle] = useState<null | { leader: string; team: any[]; index: number }>(null);
   const [gymVictory, setGymVictory] = useState<string | null>(null);
+  const [leagueBattle, setLeagueBattle] = useState<null | { trainers: { name: string; team: any[] }[]; trainerIndex: number; pokemonIndex: number }>(null);
+  const [leagueVictory, setLeagueVictory] = useState(false);
   const [showTeam, setShowTeam] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
   const [showKantoMap, setShowKantoMap] = useState(false);
@@ -1079,6 +1103,8 @@ export default function App() {
               game.leaveRoom();
               setGymBattle(null);
               setGymVictory(null);
+              setLeagueBattle(null);
+              setLeagueVictory(false);
               setCityModal(null);
               setShowTeam(false);
             }}
@@ -1104,6 +1130,8 @@ export default function App() {
               game.leaveRoom();
               setGymBattle(null);
               setGymVictory(null);
+              setLeagueBattle(null);
+              setLeagueVictory(false);
               setCityModal(null);
               setShowTeam(false);
             }}
@@ -1118,7 +1146,7 @@ export default function App() {
               game.movePlayer(playerId, to);
               const loc = LOCATIONS[to];
               if (loc?.type === "town") {
-                setTimeout(() => setCityModal({ name: to, description: `${to} — a place of adventure.`, gym: loc.gym ?? null }), 150);
+                setTimeout(() => setCityModal({ name: to, description: `${to} — a place of adventure.`, gym: loc.gym ?? null, league: loc.league ?? false }), 150);
               }
             }}
             searchWild={game.searchWild}
@@ -1135,28 +1163,37 @@ export default function App() {
             name={cityModal.name}
             description={cityModal.description}
             gym={cityModal.gym}
+            hasBadge={cityModal.gym ? (currentPlayer?.badges?.includes(cityModal.gym) ?? false) : false}
+            league={cityModal.league}
+            badgeCount={currentPlayer?.badges?.length ?? 0}
             coins={currentPlayer?.bag?.coins ?? 0}
             pokeballCount={currentPlayer?.bag?.pokeball ?? 0}
             onBuyPokeball={() => game.buyPokeball(currentPlayer?.id ?? "")}
             onClose={() => setCityModal(null)}
             onHeal={() => game.healPlayer(currentPlayer?.id ?? "")}
             onChallenge={() => {
-              // start gym battle: build leader team based on gym key
               const leaderKey = cityModal!.gym!;
               const leaders: Record<string, { name: string; team: { id: number; level: number }[] }> = {
-                "Brock": { name: "Brock", team: [{ id: 74, level: 12 }, { id: 95, level: 14 }] }, // Geodude, Onix
-                "Misty": { name: "Misty", team: [{ id: 60, level: 18 }, { id: 121, level: 21 }] }, // Poliwag, Starmie
-                "Lt. Surge": { name: "Lt. Surge", team: [{ id: 25, level: 20 }, { id: 26, level: 22 }] }, // Pikachu, Raichu
-                "Erika": { name: "Erika", team: [{ id: 43, level: 29 }, { id: 45, level: 32 }] }, // Oddish/Vileplume
-                "Koga": { name: "Koga", team: [{ id: 109, level: 38 }, { id: 110, level: 40 }] }, // Koffing, Weezing
-                "Sabrina": { name: "Sabrina", team: [{ id: 64, level: 48 }, { id: 65, level: 50 }] }, // Kadabra/Alakazam
-                "Blaine": { name: "Blaine", team: [{ id: 58, level: 52 }, { id: 59, level: 54 }] }, // Growlithe/Arcanine
-                "Giovanni": { name: "Giovanni", team: [{ id: 111, level: 56 }, { id: 112, level: 60 }] } // Rhydon etc.
+                "Brock": { name: "Brock", team: [{ id: 74, level: 12 }, { id: 95, level: 14 }] },
+                "Misty": { name: "Misty", team: [{ id: 60, level: 18 }, { id: 121, level: 21 }] },
+                "Lt. Surge": { name: "Lt. Surge", team: [{ id: 25, level: 20 }, { id: 26, level: 22 }] },
+                "Erika": { name: "Erika", team: [{ id: 43, level: 29 }, { id: 45, level: 32 }] },
+                "Koga": { name: "Koga", team: [{ id: 109, level: 38 }, { id: 110, level: 40 }] },
+                "Sabrina": { name: "Sabrina", team: [{ id: 64, level: 48 }, { id: 65, level: 50 }] },
+                "Blaine": { name: "Blaine", team: [{ id: 58, level: 52 }, { id: 59, level: 54 }] },
+                "Giovanni": { name: "Giovanni", team: [{ id: 111, level: 56 }, { id: 112, level: 60 }] }
               };
               const leader = leaders[leaderKey || ""] || leaders["Brock"];
-              // instantiate leader team
               Promise.all(leader.team.map((m) => getPokemonTemplate(m.id).then((tpl) => makeInstanceFromTemplate(tpl, m.level)))).then((instances) => {
                 setGymBattle({ leader: leader.name, team: instances, index: 0 });
+                setCityModal(null);
+              });
+            }}
+            onChallengeLeague={() => {
+              Promise.all(LEAGUE_TRAINERS.map((t) =>
+                Promise.all(t.team.map((m) => getPokemonTemplate(m.id).then((tpl) => makeInstanceFromTemplate(tpl, m.level)))).then((team) => ({ name: t.name, team }))
+              )).then((trainers) => {
+                setLeagueBattle({ trainers, trainerIndex: 0, pokemonIndex: 0 });
                 setCityModal(null);
               });
             }}
@@ -1250,6 +1287,58 @@ export default function App() {
               }
             }}
           />
+        )}
+        {leagueBattle && currentPlayer && currentPlayer.team[0] && (() => {
+          const { trainers, trainerIndex, pokemonIndex } = leagueBattle;
+          const trainer = trainers[trainerIndex];
+          const enemy = trainer?.team[pokemonIndex];
+          if (!trainer || !enemy) return null;
+          return (
+            <BattleModal
+              key={`league-${trainer.name}-${pokemonIndex}`}
+              isTrainerBattle
+              playerPokemon={currentPlayer.team[0]}
+              enemyPokemon={enemy}
+              playerTeam={currentPlayer.team}
+              onSwitchPokemon={(i) => game.updatePlayerLead(currentPlayer!.id, i)}
+              onPlayerUpdate={(p) => { if (currentPlayer) game.updateLeadPokemon(currentPlayer.id, p); }}
+              onEnd={(res) => {
+                sound.stopSfx("battle-start");
+                if (res.winner === "player") {
+                  if (res.xpGain != null) {
+                    setTimeout(() => game.grantXpToLead(effectivePlayerIndex, res.xpGain!), 0);
+                  }
+                  const nextPokemon = pokemonIndex + 1 < trainer.team.length;
+                  const nextTrainer = trainerIndex + 1 < trainers.length;
+                  if (nextPokemon) {
+                    setLeagueBattle((prev) => prev ? { ...prev, pokemonIndex: prev.pokemonIndex + 1 } : null);
+                  } else if (nextTrainer) {
+                    setLeagueBattle((prev) => prev ? { ...prev, trainerIndex: prev.trainerIndex + 1, pokemonIndex: 0 } : null);
+                  } else {
+                    sound.playSfx("gym-victory");
+                    setLeagueVictory(true);
+                    setLeagueBattle(null);
+                    if (socket && game.roomCode && game.roomCode !== "SOLO") {
+                      socket.emit("achievement", { type: "gym", playerName: currentPlayer!.name, gymLeader: "Champion" });
+                    } else {
+                      setAchievementToast({ type: "gym", playerName: currentPlayer!.name, gymLeader: "Champion", id: `league-${Date.now()}` });
+                    }
+                  }
+                } else {
+                  setLeagueBattle(null);
+                }
+              }}
+            />
+          );
+        })()}
+        {leagueVictory && (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 p-4">
+            <div className="bg-gray-900 p-6 rounded-lg text-white max-w-sm text-center shadow-xl border-2 border-amber-500/60">
+              <div className="font-bold text-yellow-300 mb-2 text-lg">🏆 You are the Champion!</div>
+              <p className="text-sm mb-4">You defeated the Elite Four and the Champion. The Pokémon League is yours!</p>
+              <button className="pixel-btn w-full" onClick={() => setLeagueVictory(false)}>Close</button>
+            </div>
+          </div>
         )}
         {game.phase === "battle" && game.pvpBattle && isMyPvPBattle && currentPlayer && (() => {
           const pvp = game.pvpBattle!;
@@ -1383,6 +1472,8 @@ export default function App() {
                       setShowMenu(false);
                       setGymBattle(null);
                       setGymVictory(null);
+                      setLeagueBattle(null);
+                      setLeagueVictory(false);
                       setCityModal(null);
                       setShowTeam(false);
                     }}
@@ -1679,6 +1770,7 @@ function MapScreen({
             <div className="min-w-0">
               <h2 className="text-base sm:text-xl font-bold text-white truncate">{current.location}</h2>
               <p className="text-xs sm:text-sm text-gray-300">{typeInfo.label}</p>
+              <p className="text-[10px] sm:text-xs text-amber-300/90 mt-0.5">🏅 Badges: {current.badges?.length ?? 0}/{BADGES_REQUIRED_FOR_LEAGUE}</p>
             </div>
             {loc?.gym && (
               <div className="flex items-center gap-2 bg-gray-800/80 rounded-lg px-2 py-1.5 border border-amber-600/50">

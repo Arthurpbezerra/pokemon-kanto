@@ -44,20 +44,28 @@ export function toggleMute(): boolean {
 
 const VOLUME = 0.7;
 
-function tryPlay(path: string, volume = VOLUME): Promise<void> {
+function tryPlay(path: string, volume = VOLUME, storeAsKey?: string): Promise<void> {
   return new Promise((resolve, reject) => {
     const audio = new Audio(path);
     audio.volume = volume;
+    if (storeAsKey) fallbackPlaying[storeAsKey] = audio;
     audio.oncanplaythrough = () => {
       audio.currentTime = 0;
       audio.play().then(resolve).catch(reject);
     };
-    audio.onerror = () => reject(new Error("load failed"));
+    audio.onerror = () => {
+      if (storeAsKey) delete fallbackPlaying[storeAsKey];
+      reject(new Error("load failed"));
+    };
+    audio.onended = () => {
+      if (storeAsKey) delete fallbackPlaying[storeAsKey];
+    };
   });
 }
 
 let audioUnlocked = false;
 const preloaded: Record<string, HTMLAudioElement> = {};
+const fallbackPlaying: Record<string, HTMLAudioElement> = {};
 const stopTimeouts: Record<string, ReturnType<typeof setTimeout>> = {};
 
 /** Keys that auto-stop after a few seconds (so long clips don't run forever). */
@@ -72,15 +80,22 @@ function getPath(key: string, ext: "mp3" | "mp4"): string {
 
 /** Stops playback for a sound (e.g. battle-start when battle ends). */
 export function stopSfx(key: SfxKey | string): void {
-  const el = preloaded[key as string];
+  const k = key as string;
+  const el = preloaded[k];
   if (el) {
     el.pause();
     el.currentTime = 0;
   }
-  const tid = stopTimeouts[key as string];
+  const fallback = fallbackPlaying[k];
+  if (fallback) {
+    fallback.pause();
+    fallback.currentTime = 0;
+    delete fallbackPlaying[k];
+  }
+  const tid = stopTimeouts[k];
   if (tid) {
     clearTimeout(tid);
-    delete stopTimeouts[key as string];
+    delete stopTimeouts[k];
   }
 }
 
@@ -129,27 +144,18 @@ export function playSfx(key: SfxKey | string): void {
     clearTimeout(stopTimeouts[k]);
     delete stopTimeouts[k];
   }
+  const prevFallback = fallbackPlaying[k];
+  if (prevFallback) {
+    prevFallback.pause();
+    prevFallback.currentTime = 0;
+    delete fallbackPlaying[k];
+  }
   const pathBase = `${basePath}/${key}`;
-  tryPlay(`${pathBase}.mp3`).catch(() => tryPlay(`${pathBase}.mp4`).catch(() => {}));
+  tryPlay(`${pathBase}.mp3`, VOLUME, k).catch(() => tryPlay(`${pathBase}.mp4`, VOLUME, k).catch(() => {}));
   if (AUTO_STOP_KEYS.includes(k as any)) {
     const stopMs = k === "gym-victory" ? GYM_VICTORY_STOP_SECONDS * 1000 : AUTO_STOP_SECONDS * 1000;
     stopTimeouts[k] = setTimeout(() => stopSfx(k), stopMs);
   }
-}
-
-export function playMusic(url: string, loop = true): void {
-  if (muted) return;
-  if (!audioUnlocked) unlockAudio();
-  if (!bgm) {
-    bgm = new Audio();
-    bgm.volume = 0.4;
-  }
-  currentMusicUrl = url;
-  bgm.pause();
-  bgm.currentTime = 0;
-  bgm.loop = loop;
-  bgm.src = url;
-  bgm.play().catch(() => {});
 }
 
 /** Singleton BGM: uma única instância de áudio para toda a aplicação. */

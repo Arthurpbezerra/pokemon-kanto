@@ -195,6 +195,39 @@ io.on("connection", (socket) => {
     io.to(roomCode).emit("state", state);
   });
 
+  socket.on("tradeConfirm", ({ playerAId, playerBId, aSelectedIndex, bSelectedIndex }) => {
+    const roomCode = socket.roomCode;
+    if (!roomCode || !rooms.has(roomCode)) return;
+    const state = rooms.get(roomCode);
+    const trade = state.pvpTrade;
+    if (!trade || trade.playerAId !== playerAId || trade.playerBId !== playerBId) return;
+    if (socket.id !== playerAId && socket.id !== playerBId) return;
+    if (aSelectedIndex == null || bSelectedIndex == null || aSelectedIndex < 0 || bSelectedIndex < 0) return;
+    const playerA = state.players.find((p) => p.id === playerAId);
+    const playerB = state.players.find((p) => p.id === playerBId);
+    if (!playerA?.team?.[aSelectedIndex] || !playerB?.team?.[bSelectedIndex]) return;
+    const monA = playerA.team[aSelectedIndex];
+    const monB = playerB.team[bSelectedIndex];
+    const aTeam = [...playerA.team];
+    const bTeam = [...playerB.team];
+    aTeam[aSelectedIndex] = monB;
+    bTeam[bSelectedIndex] = monA;
+    for (const p of state.players) {
+      if (p.id === playerAId) {
+        p.team = aTeam;
+        break;
+      }
+    }
+    for (const p of state.players) {
+      if (p.id === playerBId) {
+        p.team = bTeam;
+        break;
+      }
+    }
+    state.pvpTrade = null;
+    io.to(roomCode).emit("state", state);
+  });
+
   function clearPvpForPlayer(state, playerId) {
     if (state.pvpRequest && (state.pvpRequest.fromPlayerId === playerId || state.pvpRequest.toPlayerId === playerId)) {
       state.pvpRequest = null;
@@ -202,6 +235,9 @@ io.on("connection", (socket) => {
     if (state.pvpBattle && (state.pvpBattle.challengerId === playerId || state.pvpBattle.defenderId === playerId)) {
       state.pvpBattle = null;
       state.phase = "map";
+    }
+    if (state.pvpTrade && (state.pvpTrade.playerAId === playerId || state.pvpTrade.playerBId === playerId)) {
+      state.pvpTrade = null;
     }
   }
 
