@@ -98,45 +98,67 @@ const STARTER_IDS = [1, 4, 7];
 const KANTO_GYM_LEADERS = ["Brock", "Misty", "Lt. Surge", "Erika", "Koga", "Sabrina", "Blaine", "Giovanni"] as const;
 const BADGES_REQUIRED_FOR_LEAGUE = 8;
 
-const LOCATIONS: Record<string, { type: "town" | "grass" | "water" | "cave"; connections: string[]; wildPool?: number[]; gym?: string | null; league?: boolean; x: number; y: number }> = {
+type LocationDef = {
+  type: "town" | "grass" | "water" | "cave";
+  connections: string[];
+  wildPool?: number[];
+  minLevel?: number;
+  maxLevel?: number;
+  gym?: string | null;
+  league?: boolean;
+  x: number;
+  y: number;
+};
+
+/** Níveis por local (progressão estilo R/B/Y). Sem min/max = fallback 3–7. */
+const LOCATIONS: Record<string, LocationDef> = {
   "Pallet Town": { type: "town", connections: ["Route 1"], gym: null, x: 18, y: 70 },
-  "Route 1": { type: "grass", connections: ["Pallet Town", "Viridian City"], wildPool: [16, 19], gym: null, x: 18, y: 58 },
+  "Route 1": { type: "grass", connections: ["Pallet Town", "Viridian City"], wildPool: [16, 19], minLevel: 2, maxLevel: 5, gym: null, x: 18, y: 58 },
   "Viridian City": { type: "town", connections: ["Route 1", "Route 2", "Viridian Gym"], gym: null, x: 18, y: 44 },
-  "Route 2": { type: "grass", connections: ["Viridian City", "Viridian Forest"], wildPool: [16, 19, 10, 13], gym: null, x: 26, y: 36 },
-  "Viridian Forest": { type: "grass", connections: ["Route 2", "Pewter City"], wildPool: [10, 13, 11, 14, 16, 25], gym: null, x: 32, y: 32 },
+  "Route 2": { type: "grass", connections: ["Viridian City", "Viridian Forest"], wildPool: [16, 19, 10, 13], minLevel: 3, maxLevel: 6, gym: null, x: 26, y: 36 },
+  "Viridian Forest": { type: "grass", connections: ["Route 2", "Pewter City"], wildPool: [10, 13, 11, 14, 16, 25], minLevel: 3, maxLevel: 6, gym: null, x: 32, y: 32 },
   "Pewter City": { type: "town", connections: ["Viridian Forest", "Mt. Moon"], gym: "Brock", x: 38, y: 28 },
-  "Mt. Moon": { type: "cave", connections: ["Pewter City", "Route 4"], wildPool: [74, 41, 35], gym: null, x: 44, y: 36 },
-  "Route 4": { type: "grass", connections: ["Mt. Moon", "Cerulean City"], wildPool: [16, 21], gym: null, x: 52, y: 36 },
+  "Mt. Moon": { type: "cave", connections: ["Pewter City", "Route 4"], wildPool: [74, 41, 35, 46], minLevel: 6, maxLevel: 11, gym: null, x: 44, y: 36 },
+  "Route 4": { type: "grass", connections: ["Mt. Moon", "Cerulean City"], wildPool: [16, 21, 46], minLevel: 6, maxLevel: 10, gym: null, x: 52, y: 36 },
   "Cerulean City": { type: "town", connections: ["Route 4", "Route 24", "Route 5"], gym: "Misty", x: 62, y: 30 },
-  "Route 24": { type: "grass", connections: ["Cerulean City", "Route 25"], wildPool: [43, 69], gym: null, x: 68, y: 28 },
-  "Route 25": { type: "grass", connections: ["Route 24", "Bill's Sea Cottage"], wildPool: [43, 69], gym: null, x: 74, y: 26 },
+  "Route 24": { type: "grass", connections: ["Cerulean City", "Route 25"], wildPool: [43, 69, 16], minLevel: 6, maxLevel: 10, gym: null, x: 68, y: 28 },
+  "Route 25": { type: "grass", connections: ["Route 24", "Bill's Sea Cottage"], wildPool: [43, 69, 25, 16], minLevel: 8, maxLevel: 12, gym: null, x: 74, y: 26 },
   "Bill's Sea Cottage": { type: "town", connections: ["Route 25"], gym: null, x: 78, y: 22 },
   "Vermilion City": { type: "town", connections: ["Route 5", "Route 6", "Route 11"], gym: "Lt. Surge", x: 78, y: 52 },
-  "Route 11": { type: "grass", connections: ["Vermilion City", "Route 12"], wildPool: [16, 19, 96], gym: null, x: 82, y: 44 },
-  "Route 12": { type: "grass", connections: ["Route 11", "Lavender Town"], wildPool: [16, 43, 69], gym: null, x: 86, y: 36 },
+  "Route 11": { type: "grass", connections: ["Vermilion City", "Route 12"], wildPool: [16, 19, 96, 21], minLevel: 13, maxLevel: 17, gym: null, x: 82, y: 44 },
+  "Route 12": { type: "grass", connections: ["Route 11", "Lavender Town"], wildPool: [16, 43, 69, 17], minLevel: 13, maxLevel: 17, gym: null, x: 86, y: 36 },
   "Lavender Town": { type: "town", connections: ["Route 12", "Route 10", "Route 7", "Route 8"], gym: null, x: 86, y: 26 },
-  "Route 10": { type: "grass", connections: ["Lavender Town", "Cerulean City"], wildPool: [41, 81], gym: null, x: 74, y: 34 },
-  "Route 7": { type: "grass", connections: ["Lavender Town", "Celadon City", "Saffron City"], wildPool: [43, 69], gym: null, x: 68, y: 44 },
-  "Route 8": { type: "grass", connections: ["Lavender Town", "Celadon City", "Saffron City"], wildPool: [43, 69], gym: null, x: 64, y: 50 },
+  "Route 10": { type: "grass", connections: ["Lavender Town", "Cerulean City"], wildPool: [41, 81, 100], minLevel: 10, maxLevel: 14, gym: null, x: 74, y: 34 },
+  "Route 7": { type: "grass", connections: ["Lavender Town", "Celadon City", "Saffron City"], wildPool: [43, 69, 16], minLevel: 8, maxLevel: 12, gym: null, x: 68, y: 44 },
+  "Route 8": { type: "grass", connections: ["Lavender Town", "Celadon City", "Saffron City"], wildPool: [43, 69, 19, 96], minLevel: 8, maxLevel: 12, gym: null, x: 64, y: 50 },
   "Celadon City": { type: "town", connections: ["Route 7", "Route 9", "Route 16", "Saffron City"], gym: "Erika", x: 58, y: 50 },
-  "Route 9": { type: "grass", connections: ["Celadon City", "Lavender Town"], wildPool: [43, 69], gym: null, x: 66, y: 34 },
-  "Route 16": { type: "grass", connections: ["Celadon City", "Route 17"], wildPool: [111, 115], gym: null, x: 60, y: 58 },
-  "Route 17": { type: "grass", connections: ["Route 16", "Route 18"], wildPool: [111, 115], gym: null, x: 64, y: 64 },
-  "Route 18": { type: "grass", connections: ["Route 17", "Fuchsia City"], wildPool: [111, 115], gym: null, x: 68, y: 74 },
+  "Route 9": { type: "grass", connections: ["Celadon City", "Lavender Town"], wildPool: [43, 69, 21, 74], minLevel: 10, maxLevel: 14, gym: null, x: 66, y: 34 },
+  "Route 16": { type: "grass", connections: ["Celadon City", "Route 17"], wildPool: [84, 111], minLevel: 18, maxLevel: 22, gym: null, x: 60, y: 58 },
+  "Route 17": { type: "grass", connections: ["Route 16", "Route 18"], wildPool: [84, 111], minLevel: 20, maxLevel: 24, gym: null, x: 64, y: 64 },
+  "Route 18": { type: "grass", connections: ["Route 17", "Fuchsia City"], wildPool: [84, 111, 16], minLevel: 22, maxLevel: 26, gym: null, x: 68, y: 74 },
   "Fuchsia City": { type: "town", connections: ["Route 18", "Route 19"], gym: "Koga", x: 72, y: 78 },
-  "Route 19": { type: "water", connections: ["Fuchsia City", "Cinnabar Island"], wildPool: [129, 118, 72], gym: null, x: 50, y: 86 },
-  "Route 20": { type: "water", connections: ["Fuchsia City", "Cinnabar Island"], wildPool: [129, 118, 72], gym: null, x: 60, y: 86 },
+  "Route 19": { type: "water", connections: ["Fuchsia City", "Cinnabar Island"], wildPool: [129, 118, 72], minLevel: 15, maxLevel: 25, gym: null, x: 50, y: 86 },
+  "Route 20": { type: "water", connections: ["Fuchsia City", "Cinnabar Island"], wildPool: [129, 118, 72, 87], minLevel: 20, maxLevel: 28, gym: null, x: 60, y: 86 },
   "Cinnabar Island": { type: "town", connections: ["Route 19", "Route 21"], gym: "Blaine", x: 30, y: 92 },
-  "Route 21": { type: "grass", connections: ["Cinnabar Island", "Pallet Town"], wildPool: [16, 21, 74], gym: null, x: 22, y: 82 },
-  "Route 13": { type: "grass", connections: ["Fuchsia City", "Route 14"], wildPool: [111, 123], gym: null, x: 68, y: 72 },
-  "Route 14": { type: "grass", connections: ["Route 13", "Route 15"], wildPool: [111, 123], gym: null, x: 70, y: 68 },
-  "Route 15": { type: "grass", connections: ["Route 14", "Lavender Town"], wildPool: [111, 123], gym: null, x: 74, y: 58 },
+  "Route 21": { type: "grass", connections: ["Cinnabar Island", "Pallet Town"], wildPool: [16, 21, 74, 19], minLevel: 15, maxLevel: 28, gym: null, x: 22, y: 82 },
+  "Route 13": { type: "grass", connections: ["Fuchsia City", "Route 14"], wildPool: [16, 17, 43, 69, 49], minLevel: 25, maxLevel: 29, gym: null, x: 68, y: 72 },
+  "Route 14": { type: "grass", connections: ["Route 13", "Route 15"], wildPool: [16, 17, 43, 44, 69], minLevel: 25, maxLevel: 29, gym: null, x: 70, y: 68 },
+  "Route 15": { type: "grass", connections: ["Route 14", "Lavender Town"], wildPool: [16, 17, 43, 69, 123], minLevel: 25, maxLevel: 29, gym: null, x: 74, y: 58 },
   "Saffron City": { type: "town", connections: ["Celadon City", "Route 5", "Route 6", "Route 7", "Route 8"], gym: "Sabrina", x: 66, y: 48 },
-  "Route 5": { type: "grass", connections: ["Cerulean City", "Vermilion City", "Saffron City"], wildPool: [16, 43, 69], gym: null, x: 68, y: 40 },
-  "Route 6": { type: "grass", connections: ["Saffron City", "Vermilion City"], wildPool: [16, 19, 21], gym: null, x: 72, y: 44 },
+  "Route 5": { type: "grass", connections: ["Cerulean City", "Vermilion City", "Saffron City"], wildPool: [16, 43, 69], minLevel: 8, maxLevel: 12, gym: null, x: 68, y: 40 },
+  "Route 6": { type: "grass", connections: ["Saffron City", "Vermilion City"], wildPool: [16, 19, 21], minLevel: 10, maxLevel: 14, gym: null, x: 72, y: 44 },
   "Viridian Gym": { type: "town", connections: ["Viridian City"], gym: "Giovanni", x: 18, y: 36 },
   "Indigo Plateau": { type: "town", connections: ["Viridian Gym"], gym: null, league: true, x: 28, y: 10 }
 };
+
+function getWildLevel(loc: LocationDef | undefined): number {
+  if (!loc) return 3 + Math.floor(Math.random() * 5);
+  const min = loc.minLevel ?? 3;
+  const max = loc.maxLevel ?? 7;
+  const lo = Math.min(min, max);
+  const hi = Math.max(min, max);
+  return lo + Math.floor(Math.random() * (hi - lo + 1));
+}
 
 const GYM_LEADER_SPRITES: Record<string, string> = {
   "Brock": "https://play.pokemonshowdown.com/sprites/trainers/gen1/brock.png",
@@ -460,7 +482,7 @@ function useGameState(socket: Socket | null) {
       sound.playSfx("battle-start");
       const pid = pool[Math.floor(Math.random() * pool.length)];
       getPokemonTemplate(pid).then((tpl) => {
-        const lvl = Math.max(3, Math.floor(Math.random() * 5) + 3);
+        const lvl = getWildLevel(loc);
         const inst = makeInstanceFromTemplate(tpl, lvl);
         const encounter = { pokemon: inst, location: to, triggeredByPlayerId: playerId };
         myBattleRef.current = { phase: "battle", wildEncounter: encounter };
@@ -478,7 +500,7 @@ function useGameState(socket: Socket | null) {
     sound.playSfx("battle-start");
     const pid = loc.wildPool[Math.floor(Math.random() * loc.wildPool.length)];
     getPokemonTemplate(pid).then((tpl) => {
-      const lvl = Math.max(3, Math.floor(Math.random() * 5) + 3);
+      const lvl = getWildLevel(loc);
       const inst = makeInstanceFromTemplate(tpl, lvl);
       const encounter = { pokemon: inst, location: pl.location, triggeredByPlayerId: playerId };
       myBattleRef.current = { phase: "battle", wildEncounter: encounter };
