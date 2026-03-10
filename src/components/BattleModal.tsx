@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { calculateDamage, calculateDamageWithTypes, whoGoesFirst } from "../engine/battle";
+import { calculateDamage, calculateDamageWithTypes, whoGoesFirst, getMoveStatusEffect, isImmuneToStatus, effectiveSpeed, type StatusType } from "../engine/battle";
 import { getMoveData, formatMoveName, xpForDefeatingEnemy } from "../api/pokeapi";
 
 type PokemonInstance = {
@@ -14,9 +14,12 @@ type PokemonInstance = {
   moves?: string[];
   xp?: number;
   xpToNext?: number;
+  status?: StatusType | null;
+  sleepTurnsLeft?: number;
+  leechSeed?: boolean;
 };
 
-export type BattleEndResult = { winner: "player" | "enemy" | "run"; xpGain?: number; playerFinalHp?: number; enemyFinalHp?: number };
+export type BattleEndResult = { winner: "player" | "enemy" | "run"; xpGain?: number; playerFinalHp?: number; enemyFinalHp?: number; participantIds?: number[] };
 
 function getHp(m: { hp?: number } | null | undefined): number {
   return m && typeof (m as { hp?: number }).hp === "number" ? (m as { hp: number }).hp : 0;
@@ -54,8 +57,17 @@ export default function BattleModal({ playerPokemon, enemyPokemon, playerTeam, o
   const [busy, setBusy] = useState(false);
   const [showSwitchPicker, setShowSwitchPicker] = useState(false);
   const [faintedLeadId, setFaintedLeadId] = useState<number | null>(null);
+  const [showVoluntarySwitch, setShowVoluntarySwitch] = useState(false);
+  const [victorySummary, setVictorySummary] = useState<{ result: BattleEndResult; isCapture?: boolean } | null>(null);
   const enemyHpAfterFirstAttackRef = useRef<number>(0);
   const playerHpAfterFirstAttackRef = useRef<number>(0);
+  const participantIdsRef = useRef<Set<number>>(new Set());
+  const playerStillAsleepRef = useRef(false);
+  const enemyStillAsleepRef = useRef(false);
+  const enemyLeechDrainRef = useRef(0);
+  const playerLeechDrainRef = useRef(0);
+
+  const VICTORY_DELAY_MS = 3000;
 
   // Do NOT sync from props after mount: parent's enemyPokemon always has full HP.
   // Resyncing would overwrite local battle damage and make the enemy "heal" on every parent re-render.
@@ -63,6 +75,11 @@ export default function BattleModal({ playerPokemon, enemyPokemon, playerTeam, o
   // clear log only on initial mount
   useEffect(() => {
     setLog([]);
+  }, []);
+
+  // Init participants with initial lead
+  useEffect(() => {
+    participantIdsRef.current.add(playerPokemon.id);
   }, []);
 
   // When parent switches lead after we chose another Pokémon, update local player state
@@ -73,6 +90,22 @@ export default function BattleModal({ playerPokemon, enemyPokemon, playerTeam, o
       setFaintedLeadId(null);
     }
   }, [showSwitchPicker, faintedLeadId, playerPokemon]);
+
+  useEffect(() => {
+    if (showVoluntarySwitch && playerPokemon.id !== p.id) {
+      setP({ ...playerPokemon });
+      setShowVoluntarySwitch(false);
+    }
+  }, [showVoluntarySwitch, playerPokemon.id, p.id, playerPokemon]);
+
+  useEffect(() => {
+    if (!victorySummary) return;
+    const t = setTimeout(() => {
+      onEnd(victorySummary.result);
+      setVictorySummary(null);
+    }, VICTORY_DELAY_MS);
+    return () => clearTimeout(t);
+  }, [victorySummary, onEnd]);
 
   const pushLog = (line: string) =>
     setLog((l) => {
@@ -86,6 +119,34 @@ export default function BattleModal({ playerPokemon, enemyPokemon, playerTeam, o
     setBusy(true);
     enemyHpAfterFirstAttackRef.current = e.hp;
     playerHpAfterFirstAttackRef.current = p.hp;
+    // Decrement sleep at start of turn (Gen 1: sleep counter decreases each turn)
+    setP((cur) => {
+      if (cur.status === "sleep" && cur.sleepTurnsLeft != null) {
+        const next = cur.sleepTurnsLeft - 1;
+        if (next <= 0) {
+          playerStillAsleepRef.current = false;
+          return { ...cur, status: undefined, sleepTurnsLeft: undefined };
+        }
+        playerStillAsleepRef.current = true;
+        return { ...cur, sleepTurnsLeft: next };
+      }
+      playerStillAsleepRef.current = false;
+      return cur;
+    });
+    setE((cur) => {
+      if (cur.status === "sleep" && cur.sleepTurnsLeft != null) {
+        const next = cur.sleepTurnsLeft - 1;
+        if (next <= 0) {
+          enemyStillAsleepRef.current = false;
+          return { ...cur, status: undefined, sleepTurnsLeft: undefined };
+        }
+        enemyStillAsleepRef.current = true;
+        return { ...cur, sleepTurnsLeft: next };
+      }
+      enemyStillAsleepRef.current = false;
+      return cur;
+    });
+    await sleep(0);
     // resolve player's move data
     let playerMove: any = { name: moveName ?? "Attack", power: 40, accuracy: 100, damage_class: "physical", type: "normal" };
     if (moveName) {
@@ -95,8 +156,9 @@ export default function BattleModal({ playerPokemon, enemyPokemon, playerTeam, o
         playerMove = { name: moveName, power: 40, accuracy: 100, damage_class: "physical", type: "normal" };
       }
     }
-    // determine order
-    const first = whoGoesFirst(p.stats?.speed ?? 5, e.stats?.speed ?? 5);
+    const pSpeed = effectiveSpeed(p.stats?.speed ?? 5, p.status);
+    const eSpeed = effectiveSpeed(e.stats?.speed ?? 5, e.status);
+    const first = whoGoesFirst(pSpeed, eSpeed);
     const attackerFirst = first === "a" ? "player" : "enemy";
 
     const effectivenessMsg = (eff: "immune" | "weak" | "normal" | "super") => {
@@ -146,7 +208,6 @@ export default function BattleModal({ playerPokemon, enemyPokemon, playerTeam, o
     const applyStatChanges = (attackerIsPlayer: boolean, statChanges: any[], mvName?: string) => {
       if (!statChanges || statChanges.length === 0) return;
       if (attackerIsPlayer) {
-        // apply to enemy (e)
         setE((cur) => {
           const stages = { ...(cur as any).stages || { attack:0, defense:0, specialAttack:0, specialDefense:0, speed:0 } };
           statChanges.forEach((sc: any) => {
@@ -159,7 +220,6 @@ export default function BattleModal({ playerPokemon, enemyPokemon, playerTeam, o
           return { ...cur, stages };
         });
       } else {
-        // apply to player (p)
         setP((cur) => {
           const stages = { ...(cur as any).stages || { attack:0, defense:0, specialAttack:0, specialDefense:0, speed:0 } };
           statChanges.forEach((sc: any) => {
@@ -175,19 +235,82 @@ export default function BattleModal({ playerPokemon, enemyPokemon, playerTeam, o
         });
       }
     };
+
+    const applyStatus = (attackerIsPlayer: boolean, statusType: StatusType, moveName: string, accuracy: number) => {
+      const hit = (Math.random() * 100) < accuracy;
+      if (!hit) {
+        pushLog(`${attackerIsPlayer ? p.name : e.name} used ${moveName} but it missed!`);
+        return;
+      }
+      if (attackerIsPlayer) {
+        const defenderTypes = e.types ?? ["normal"];
+        if (isImmuneToStatus(defenderTypes, statusType, moveName)) {
+          pushLog(`It doesn't affect ${e.name}...`);
+          return;
+        }
+        const curStatus = (e as PokemonInstance).status;
+        if (statusType !== "leech" && (curStatus === "paralysis" || curStatus === "poison" || curStatus === "sleep")) {
+          pushLog(`${e.name} is already affected!`);
+          return;
+        }
+        if (statusType === "leech") {
+          setE((cur) => ({ ...cur, leechSeed: true }));
+          pushLog(`${e.name} was seeded!`);
+          return;
+        }
+        const sleepTurns = statusType === "sleep" ? 1 + Math.floor(Math.random() * 3) : undefined;
+        setE((cur) => ({ ...cur, status: statusType, sleepTurnsLeft: sleepTurns }));
+        pushLog(`${e.name} was ${statusType === "paralysis" ? "paralyzed" : statusType === "poison" ? "poisoned" : "put to sleep"}!`);
+      } else {
+        const defenderTypes = p.types ?? ["normal"];
+        if (isImmuneToStatus(defenderTypes, statusType, moveName)) {
+          pushLog(`It doesn't affect ${p.name}...`);
+          return;
+        }
+        const curStatusP = (p as PokemonInstance).status;
+        if (statusType !== "leech" && (curStatusP === "paralysis" || curStatusP === "poison" || curStatusP === "sleep")) {
+          pushLog(`${p.name} is already affected!`);
+          return;
+        }
+        if (statusType === "leech") {
+          setP((cur) => {
+            const updated = { ...cur, leechSeed: true };
+            try { onPlayerUpdate(updated); } catch {}
+            return updated;
+          });
+          pushLog(`${p.name} was seeded!`);
+          return;
+        }
+        const sleepTurns = statusType === "sleep" ? 1 + Math.floor(Math.random() * 3) : undefined;
+        setP((cur) => {
+          const updated = { ...cur, status: statusType, sleepTurnsLeft: sleepTurns };
+          try { onPlayerUpdate(updated); } catch {}
+          return updated;
+        });
+        pushLog(`${p.name} was ${statusType === "paralysis" ? "paralyzed" : statusType === "poison" ? "poisoned" : "put to sleep"}!`);
+      }
+    };
     // First attack
       if (attackerFirst === "player") {
-      // accuracy check
-      const hit = (playerMove.accuracy ?? 100) === null ? true : (Math.random() * 100) < (playerMove.accuracy ?? 100);
-      if (hit) {
-        if (playerMove.damage_class === "status") {
-          applyStatChanges(true, playerMove.stat_changes ?? [], playerMove.name);
-        } else {
-          applyAttack(true, playerMove.power ?? 40, playerMove.name, playerMove.damage_class ?? "physical", playerMove.type, e.types);
-        }
-      } else pushLog(`${p.name} used ${playerMove.name} but it missed!`);
+      if (playerStillAsleepRef.current) {
+        pushLog(`${p.name} is fast asleep.`);
+      } else if (p.status === "paralysis" && Math.random() < 0.25) {
+        pushLog(`${p.name} is paralyzed! It can't move!`);
+      } else {
+        const statusEffect = getMoveStatusEffect(playerMove.name);
+        const acc = playerMove.accuracy ?? statusEffect?.accuracy ?? 100;
+        const hit = acc === null ? true : (Math.random() * 100) < acc;
+        if (hit) {
+          if (statusEffect) {
+            applyStatus(true, statusEffect.status, playerMove.name, (acc ?? statusEffect.accuracy) ?? 100);
+          } else if (playerMove.damage_class === "status") {
+            applyStatChanges(true, playerMove.stat_changes ?? [], playerMove.name);
+          } else {
+            applyAttack(true, playerMove.power ?? 40, playerMove.name, playerMove.damage_class ?? "physical", playerMove.type, e.types);
+          }
+        } else pushLog(`${p.name} used ${playerMove.name} but it missed!`);
+      }
     } else {
-      // enemy selects move
       const enemyMoveName = (e.moves && e.moves.length > 0) ? e.moves[Math.floor(Math.random() * e.moves.length)] : undefined;
       let enemyMove: any = { name: enemyMoveName ?? "Attack", power: 35, accuracy: 100, damage_class: "physical", type: "normal" };
       if (enemyMoveName) {
@@ -197,14 +320,24 @@ export default function BattleModal({ playerPokemon, enemyPokemon, playerTeam, o
           enemyMove = { name: enemyMoveName, power: 35, accuracy: 100, damage_class: "physical", type: "normal" };
         }
       }
-      const enemyHit = (enemyMove.accuracy ?? 100) === null ? true : (Math.random() * 100) < (enemyMove.accuracy ?? 100);
-      if (enemyHit) {
-        if (enemyMove.damage_class === "status") {
-          applyStatChanges(false, enemyMove.stat_changes ?? [], enemyMove.name);
-        } else {
-          applyAttack(false, enemyMove.power ?? 35, enemyMove.name, enemyMove.damage_class ?? "physical", enemyMove.type, p.types);
-        }
-      } else pushLog(`${e.name} used ${enemyMove.name} but it missed!`);
+      if (enemyStillAsleepRef.current) {
+        pushLog(`${e.name} is fast asleep.`);
+      } else if (e.status === "paralysis" && Math.random() < 0.25) {
+        pushLog(`${e.name} is paralyzed! It can't move!`);
+      } else {
+        const statusEffectE = getMoveStatusEffect(enemyMove.name);
+        const accE = enemyMove.accuracy ?? statusEffectE?.accuracy ?? 100;
+        const enemyHit = accE === null ? true : (Math.random() * 100) < accE;
+        if (enemyHit) {
+          if (statusEffectE) {
+            applyStatus(false, statusEffectE.status, enemyMove.name, (accE ?? statusEffectE.accuracy) ?? 100);
+          } else if (enemyMove.damage_class === "status") {
+            applyStatChanges(false, enemyMove.stat_changes ?? [], enemyMove.name);
+          } else {
+            applyAttack(false, enemyMove.power ?? 35, enemyMove.name, enemyMove.damage_class ?? "physical", enemyMove.type, p.types);
+          }
+        } else pushLog(`${e.name} used ${enemyMove.name} but it missed!`);
+      }
     }
 
     // wait a bit then second attack if still alive (use refs: state e/p are stale in closure)
@@ -216,29 +349,77 @@ export default function BattleModal({ playerPokemon, enemyPokemon, playerTeam, o
     let latestE = e;
     // perform second attack only if defender did not faint
     if (attackerFirst === "player") {
-      // enemy retaliates only if still alive (player attacked first; enemy HP was updated in setE)
       if (enemyHpAfterFirstAttackRef.current > 0) {
-        const enemyMoveName = (e.moves && e.moves.length > 0) ? e.moves[Math.floor(Math.random() * e.moves.length)] : undefined;
-        let enemyMove: any = { name: enemyMoveName ?? "Attack", power: 35, accuracy: 100, damage_class: "physical", type: "normal" };
-        if (enemyMoveName) {
-          try {
-            enemyMove = await getMoveData(enemyMoveName);
-          } catch {
-            enemyMove = { name: enemyMoveName, power: 35, accuracy: 100, damage_class: "physical", type: "normal" };
+        if (enemyStillAsleepRef.current) {
+          pushLog(`${e.name} is fast asleep.`);
+        } else if (e.status === "paralysis" && Math.random() < 0.25) {
+          pushLog(`${e.name} is paralyzed! It can't move!`);
+        } else {
+          const enemyMoveName2 = (e.moves && e.moves.length > 0) ? e.moves[Math.floor(Math.random() * e.moves.length)] : undefined;
+          let enemyMove2: any = { name: enemyMoveName2 ?? "Attack", power: 35, accuracy: 100, damage_class: "physical", type: "normal" };
+          if (enemyMoveName2) {
+            try {
+              enemyMove2 = await getMoveData(enemyMoveName2);
+            } catch {
+              enemyMove2 = { name: enemyMoveName2, power: 35, accuracy: 100, damage_class: "physical", type: "normal" };
+            }
           }
+          const statusEffectE2 = getMoveStatusEffect(enemyMove2.name);
+          const accE2 = enemyMove2.accuracy ?? statusEffectE2?.accuracy ?? 100;
+          const enemyHit2 = accE2 === null ? true : (Math.random() * 100) < accE2;
+          if (enemyHit2) {
+            if (statusEffectE2) {
+              applyStatus(false, statusEffectE2.status, enemyMove2.name, (accE2 ?? statusEffectE2.accuracy) ?? 100);
+            } else if (enemyMove2.damage_class === "status") {
+              applyStatChanges(false, enemyMove2.stat_changes ?? [], enemyMove2.name);
+            } else {
+              applyAttack(false, enemyMove2.power ?? 35, enemyMove2.name, enemyMove2.damage_class ?? "physical", enemyMove2.type, p.types);
+            }
+          } else pushLog(`${e.name} used ${enemyMove2.name} but it missed!`);
         }
-        const enemyHit = (enemyMove.accuracy ?? 100) === null ? true : (Math.random() * 100) < (enemyMove.accuracy ?? 100);
-        if (enemyHit) applyAttack(false, enemyMove.power ?? 35, enemyMove.name, enemyMove.damage_class ?? "physical", enemyMove.type, p.types);
-        else pushLog(`${e.name} used ${enemyMove.name} but it missed!`);
       }
     } else {
-      // player retaliates only if still alive (enemy attacked first; player HP was updated in setP)
       if (playerHpAfterFirstAttackRef.current > 0) {
-        const playerHit = (playerMove.accuracy ?? 100) === null ? true : (Math.random() * 100) < (playerMove.accuracy ?? 100);
-        if (playerHit) applyAttack(true, playerMove.power ?? 40, playerMove.name, playerMove.damage_class ?? "physical", playerMove.type, e.types);
-        else pushLog(`${p.name} used ${playerMove.name} but it missed!`);
+        if (playerStillAsleepRef.current) {
+          pushLog(`${p.name} is fast asleep.`);
+        } else if (p.status === "paralysis" && Math.random() < 0.25) {
+          pushLog(`${p.name} is paralyzed! It can't move!`);
+        } else {
+          const statusEffect2 = getMoveStatusEffect(playerMove.name);
+          const acc2 = playerMove.accuracy ?? statusEffect2?.accuracy ?? 100;
+          const hit2 = acc2 === null ? true : (Math.random() * 100) < acc2;
+          if (hit2) {
+            if (statusEffect2) {
+              applyStatus(true, statusEffect2.status, playerMove.name, (acc2 ?? statusEffect2?.accuracy) ?? 100);
+            } else if (playerMove.damage_class === "status") {
+              applyStatChanges(true, playerMove.stat_changes ?? [], playerMove.name);
+            } else {
+              applyAttack(true, playerMove.power ?? 40, playerMove.name, playerMove.damage_class ?? "physical", playerMove.type, e.types);
+            }
+          } else pushLog(`${p.name} used ${playerMove.name} but it missed!`);
+        }
       }
     }
+
+    // End of turn: poison (1/16 max HP) and leech seed drain (Gen 1)
+    setE((cur) => {
+      const poisonDmg = cur.status === "poison" ? Math.max(1, Math.floor((cur.maxHp ?? 10) / 16)) : 0;
+      const leechDmg = cur.leechSeed ? Math.max(1, Math.floor((cur.maxHp ?? 10) / 16)) : 0;
+      enemyLeechDrainRef.current = leechDmg;
+      if (poisonDmg > 0) pushLog(`${cur.name} is hurt by poison!`);
+      if (leechDmg > 0) pushLog(`Leech seed drains ${cur.name}!`);
+      return { ...cur, hp: Math.max(0, cur.hp - poisonDmg - leechDmg) };
+    });
+    setP((cur) => {
+      const poisonDmg = cur.status === "poison" ? Math.max(1, Math.floor((cur.maxHp ?? 10) / 16)) : 0;
+      const leechDmg = cur.leechSeed ? Math.max(1, Math.floor((cur.maxHp ?? 10) / 16)) : 0;
+      playerLeechDrainRef.current = leechDmg;
+      const healFromEnemy = enemyLeechDrainRef.current;
+      if (poisonDmg > 0) pushLog(`${cur.name} is hurt by poison!`);
+      if (leechDmg > 0) pushLog(`Leech seed drains ${cur.name}!`);
+      if (healFromEnemy > 0) pushLog(`${cur.name} absorbed health from the leech seed!`);
+      return { ...cur, hp: Math.min(cur.maxHp ?? 10, Math.max(0, cur.hp - poisonDmg - leechDmg) + healFromEnemy) };
+    });
 
     // wait and check for faint
     await sleep(900);
@@ -257,7 +438,12 @@ export default function BattleModal({ playerPokemon, enemyPokemon, playerTeam, o
       pushLog(`${curE.name} fainted!`);
       const xpGain = (isPvP && !isTrainerBattle) ? undefined : xpForDefeatingEnemy(curE.level ?? 1);
       setBusy(false);
-      onEnd({ winner: "player", xpGain, ...(isPvP && { playerFinalHp: curPHp, enemyFinalHp: Math.max(0, curEHp) }) });
+      const participantIds = (isPvP && !isTrainerBattle) ? undefined : Array.from(participantIdsRef.current);
+      if (isPvP && !isTrainerBattle) {
+        onEnd({ winner: "player", xpGain, participantIds, playerFinalHp: curPHp, enemyFinalHp: Math.max(0, curEHp) });
+      } else {
+        setVictorySummary({ result: { winner: "player", xpGain: xpGain ?? 0, participantIds: participantIds ?? [] } });
+      }
       return;
     }
 
@@ -319,18 +505,53 @@ export default function BattleModal({ playerPokemon, enemyPokemon, playerTeam, o
     );
   }
 
+  if (victorySummary) {
+    const { result, isCapture } = victorySummary;
+    const xpGain = result.xpGain ?? 0;
+    const participantIds = result.participantIds ?? [];
+    const participantNames = (playerTeam ?? [])
+      .filter((m) => participantIds.includes(m.id))
+      .map((m) => m.name);
+    return (
+      <div className="fixed inset-0 z-50 flex flex-col modal-backdrop overflow-y-auto p-2 sm:p-4 safe-area-bottom">
+        <div className="card-panel w-full max-w-2xl mx-auto p-6 text-white flex flex-col items-center justify-center border-2 border-amber-500/30">
+          <div className="text-2xl font-bold mb-4 text-amber-300">{isCapture ? "Gotcha!" : "You win!"}</div>
+          {xpGain > 0 && participantNames.length > 0 && (
+            <div className="w-full mb-4 p-3 rounded-lg bg-gray-800/80 border border-amber-600/40">
+              <div className="text-sm font-bold text-amber-200 mb-2">XP received</div>
+              <ul className="space-y-1 text-sm text-gray-200">
+                {participantNames.map((name, i) => (
+                  <li key={i}>{name} gained {xpGain} XP</li>
+                ))}
+              </ul>
+            </div>
+          )}
+          <div className="text-xs text-gray-400">Closing in {(VICTORY_DELAY_MS / 1000).toFixed(0)}s...</div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="fixed inset-0 z-50 flex flex-col modal-backdrop overflow-y-auto p-2 sm:p-4 safe-area-bottom">
       <div className="card-panel w-full max-w-2xl mx-auto p-3 sm:p-4 text-white flex-1 min-h-0 flex flex-col border-2 border-amber-500/30">
-        {showSwitchPicker ? (
+        {(showSwitchPicker || showVoluntarySwitch) ? (
           <div className="flex flex-col flex-1 min-h-0">
-            <div className="text-sm sm:text-base font-bold text-yellow-300 mb-2">Your Pokémon fainted. Choose another:</div>
+            <div className="text-sm sm:text-base font-bold text-yellow-300 mb-2">
+              {showSwitchPicker ? "Your Pokémon fainted. Choose another:" : "Switch Pokémon"}
+            </div>
+            {showVoluntarySwitch && (
+              <button type="button" className="pixel-btn w-full mb-2 text-xs" onClick={() => setShowVoluntarySwitch(false)}>Back</button>
+            )}
             <div className="grid grid-cols-2 sm:grid-cols-2 gap-2 flex-1 content-start">
               {switchOptions.map(({ mon, teamIndex }) => (
                 <button
                   key={teamIndex}
                   className="flex items-center gap-2 p-2 rounded bg-gray-700 hover:bg-gray-600 pixel-btn text-left"
-                  onClick={() => onSwitchPokemon?.(teamIndex)}
+                  onClick={() => {
+                    participantIdsRef.current.add(mon.id);
+                    onSwitchPokemon?.(teamIndex);
+                  }}
                 >
                   <img src={mon.sprite} className="w-12 h-12 flex-shrink-0" alt={mon.name} />
                   <div className="min-w-0">
@@ -374,6 +595,9 @@ export default function BattleModal({ playerPokemon, enemyPokemon, playerTeam, o
           ) : !showMoves ? (
             <div className={`grid gap-2 ${(isPvP || isTrainerBattle) ? "grid-cols-2" : "grid-cols-2 sm:grid-cols-2"}`}>
               <button className="pixel-btn pixel-btn-primary w-full" onClick={() => setShowMoves(true)} disabled={busy || (pvpWaiting && pvpMyMoveSubmitted)}>⚔ Attack</button>
+              {!isPvP && onSwitchPokemon && playerTeam && switchOptions.length > 0 && (
+                <button className="pixel-btn w-full" onClick={() => setShowVoluntarySwitch(true)} disabled={busy}>Pokémon</button>
+              )}
               <button className="pixel-btn w-full" onClick={run} disabled={busy}>{(isPvP || isTrainerBattle) ? "Forfeit" : "Run"}</button>
               {!(isPvP || isTrainerBattle) && onCapture && (
                 <button
@@ -388,7 +612,8 @@ export default function BattleModal({ playerPokemon, enemyPokemon, playerTeam, o
                         pushLog("Gotcha!");
                         await sleep(700);
                         try { onPlayerUpdate({ ...p, hp: p.hp }); } catch {}
-                        onEnd({ winner: "player" });
+                        const xpGain = xpForDefeatingEnemy(e.level ?? 1);
+                        setVictorySummary({ result: { winner: "player", xpGain, participantIds: Array.from(participantIdsRef.current) }, isCapture: true });
                       } else {
                         pushLog("It broke free!");
                         await sleep(400);

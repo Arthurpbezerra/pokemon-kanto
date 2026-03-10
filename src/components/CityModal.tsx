@@ -35,6 +35,8 @@ export default function CityModal({
 }) {
   const canBuy = coins >= POKEBALL_PRICE && onBuyPokeball;
   const canEnterLeague = league && badgeCount >= 8 && onChallengeLeague;
+  const isViridianGym = gym === "Giovanni";
+  const canChallengeGym = gym && !hasBadge && (!isViridianGym || badgeCount >= 7);
   return (
     <div className="fixed inset-0 z-40 flex items-center justify-center modal-backdrop p-3 sm:p-4 overflow-y-auto">
       <div className="card-panel p-4 w-full max-w-sm text-white border-2 border-amber-500/40">
@@ -66,11 +68,21 @@ export default function CityModal({
                 ✓ Badge obtained ({gym})
               </div>
             ) : (
-              <div className="rounded-lg border border-amber-600/50 bg-amber-950/30 p-2 flex items-center gap-3">
-                {gymLeaderSprite && <img src={gymLeaderSprite} alt={gym} className="w-14 h-14 object-contain bg-gray-900 rounded flex-shrink-0" onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />}
-                <button className="pixel-btn pixel-btn-primary flex-1 text-xs sm:text-sm" onClick={() => onChallenge?.()}>
-                  ⚔ Challenge Gym ({gym})
-                </button>
+              <div className="rounded-lg border border-amber-600/50 bg-amber-950/30 p-2 flex flex-col gap-2">
+                <div className="flex items-center gap-3">
+                  {gymLeaderSprite && <img src={gymLeaderSprite} alt={gym} className="w-14 h-14 object-contain bg-gray-900 rounded flex-shrink-0" onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />}
+                  <button
+                    className="pixel-btn pixel-btn-primary flex-1 text-xs sm:text-sm"
+                    disabled={!canChallengeGym}
+                    onClick={() => canChallengeGym && onChallenge?.()}
+                    title={isViridianGym && badgeCount < 7 ? "You need 7 badges to challenge this gym (last gym)." : undefined}
+                  >
+                    ⚔ Challenge Gym ({gym})
+                  </button>
+                </div>
+                {isViridianGym && badgeCount < 7 && (
+                  <p className="text-muted text-[10px] sm:text-xs">You need 7 badges to challenge this gym.</p>
+                )}
               </div>
             )
           )}

@@ -89,3 +89,42 @@ export function whoGoesFirst(aSpeed: number, bSpeed: number) {
   if (aSpeed === bSpeed) return Math.random() < 0.5 ? "a" : "b";
   return aSpeed > bSpeed ? "a" : "b";
 }
+
+/** Status effects (Gen 1 style). */
+export type StatusType = "paralysis" | "poison" | "sleep" | "leech";
+
+/** Move name -> status it inflicts. Accuracy from API; typical values for status moves. */
+const STATUS_MOVES: Record<string, { status: StatusType; defaultAccuracy: number }> = {
+  "thunder-wave": { status: "paralysis", defaultAccuracy: 100 },
+  "stun-spore": { status: "paralysis", defaultAccuracy: 75 },
+  "body-slam": { status: "paralysis", defaultAccuracy: 30 },
+  "poison-powder": { status: "poison", defaultAccuracy: 75 },
+  "toxic": { status: "poison", defaultAccuracy: 85 },
+  "poison-sting": { status: "poison", defaultAccuracy: 30 },
+  "sleep-powder": { status: "sleep", defaultAccuracy: 75 },
+  "hypnosis": { status: "sleep", defaultAccuracy: 60 },
+  "sing": { status: "sleep", defaultAccuracy: 55 },
+  "lovely-kiss": { status: "sleep", defaultAccuracy: 75 },
+  "leech-seed": { status: "leech", defaultAccuracy: 90 }
+};
+
+export function getMoveStatusEffect(moveName: string): { status: StatusType; accuracy: number } | null {
+  const key = (moveName || "").toLowerCase().replace(/\s+/g, "-");
+  const entry = STATUS_MOVES[key];
+  return entry ? { status: entry.status, accuracy: entry.defaultAccuracy } : null;
+}
+
+/** Gen 1: Poison vs Poison/Steel; Thunder Wave (Electric) doesn't affect Ground. */
+export function isImmuneToStatus(defenderTypes: string[], status: StatusType, moveName?: string): boolean {
+  const types = (defenderTypes || []).map((t) => t.toLowerCase());
+  if (status === "poison" && (types.includes("poison") || types.includes("steel"))) return true;
+  const moveKey = (moveName || "").toLowerCase().replace(/\s+/g, "-");
+  if (status === "paralysis" && types.includes("ground") && moveKey === "thunder-wave") return true;
+  return false;
+}
+
+/** Paralysis halves speed (Gen 1). */
+export function effectiveSpeed(speed: number, status?: string | null): number {
+  if (status === "paralysis") return Math.max(1, Math.floor(speed / 2));
+  return speed;
+}
