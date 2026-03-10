@@ -652,12 +652,39 @@ function useGameState(socket: Socket | null) {
 
   const grantXpToParticipants = async (playerIdx: number, xpGain: number, participantIds: number[]) => {
     if (!participantIds.length) return;
-    const ids = new Set(participantIds);
-    const team = playersRef.current[playerIdx]?.team;
-    if (!team?.length) return;
-    for (let i = 0; i < team.length; i++) {
-      if (ids.has(team[i].id)) await grantXpToTeamSlot(playerIdx, i, xpGain);
-    }
+    const idSet = new Set(participantIds);
+    setPlayers((ps) => {
+      const pl = ps[playerIdx];
+      if (!pl?.team?.length) return ps;
+      const newTeam = pl.team.map((mon, i) => {
+        if (!idSet.has(mon.id)) return mon;
+        const oldLevel = mon.level ?? 1;
+        let newXp = (mon.xp ?? 0) + xpGain;
+        let level = oldLevel;
+        let xpToNext = mon.xpToNext ?? xpToNextForLevel(level);
+        while (newXp >= xpToNext) {
+          newXp -= xpToNext;
+          level += 1;
+          xpToNext = xpToNextForLevel(level);
+        }
+        const levelGained = level - oldLevel;
+        if (levelGained > 0) sound.playSfx("level-up");
+        const st = mon.stats ?? { attack: 5, defense: 5, speed: 5 };
+        const newMaxHp = (mon.maxHp ?? 10) + levelGained * 2;
+        const newStats = {
+          attack: (st.attack ?? 5) + levelGained,
+          defense: (st.defense ?? 5) + levelGained,
+          speed: (st.speed ?? 5) + levelGained,
+          ...((st as any).specialAttack != null && {
+            specialAttack: ((st as any).specialAttack ?? 5) + levelGained,
+            specialDefense: ((st as any).specialDefense ?? 5) + levelGained
+          })
+        };
+        const newHp = levelGained > 0 ? newMaxHp : Math.min(mon.hp ?? newMaxHp, newMaxHp);
+        return { ...mon, level, xp: newXp, xpToNext, maxHp: newMaxHp, hp: newHp, stats: newStats };
+      });
+      return ps.map((p, idx) => (idx === playerIdx ? { ...p, team: newTeam } : p));
+    });
   };
 
   const attackWild = async (moveName?: string) => {
@@ -1335,14 +1362,14 @@ export default function App() {
             playerTeam={currentPlayer.team}
             pokeballCount={currentPlayer.bag?.pokeball ?? 0}
             onSwitchPokemon={(i) => game.updatePlayerLead(currentPlayer!.id, i)}
-            onEnd={(res) => {
+            onEnd={async (res) => {
+              if (res.winner === "player" && res.xpGain != null && res.xpGain > 0) {
+                const ids = res.participantIds?.length ? res.participantIds : (currentPlayer?.team[0] ? [currentPlayer.team[0].id] : []);
+                if (ids.length) await game.grantXpToParticipants(effectivePlayerIndex, res.xpGain, ids);
+              }
               sound.stopSfx("battle-start");
               game.setPhase("map");
               game.setWildEncounter(null);
-              if (res.winner === "player" && currentPlayer && res.xpGain != null && res.xpGain > 0) {
-                const ids = res.participantIds?.length ? res.participantIds : (currentPlayer.team[0] ? [currentPlayer.team[0].id] : []);
-                if (ids.length) setTimeout(() => game.grantXpToParticipants(effectivePlayerIndex, res.xpGain!, ids), 0);
-              }
             }}
             onPlayerUpdate={(p) => {
               if (currentPlayer) game.updateLeadPokemon(currentPlayer.id, p);
@@ -1366,12 +1393,11 @@ export default function App() {
             playerTeam={currentPlayer.team}
             onSwitchPokemon={(i) => game.updatePlayerLead(currentPlayer!.id, i)}
             onPlayerUpdate={(p) => { if (currentPlayer) game.updateLeadPokemon(currentPlayer.id, p); }}
-            onEnd={(res) => {
-              sound.stopSfx("battle-start");
+            onEnd={async (res) => {
               if (res.winner === "player") {
                 if (res.xpGain != null && res.xpGain > 0 && currentPlayer) {
                   const ids = res.participantIds?.length ? res.participantIds : (currentPlayer.team[0] ? [currentPlayer.team[0].id] : []);
-                  if (ids.length) setTimeout(() => game.grantXpToParticipants(effectivePlayerIndex, res.xpGain!, ids), 0);
+                  if (ids.length) await game.grantXpToParticipants(effectivePlayerIndex, res.xpGain, ids);
                 }
                 if (gymBattle.index + 1 < gymBattle.team.length) {
                   setGymBattle((prev) => prev ? { ...prev, index: prev.index + 1 } : null);
@@ -1389,6 +1415,7 @@ export default function App() {
               } else {
                 setGymBattle(null);
               }
+              sound.stopSfx("battle-start");
             }}
           />
         )}
@@ -1406,12 +1433,11 @@ export default function App() {
               playerTeam={currentPlayer.team}
               onSwitchPokemon={(i) => game.updatePlayerLead(currentPlayer!.id, i)}
               onPlayerUpdate={(p) => { if (currentPlayer) game.updateLeadPokemon(currentPlayer.id, p); }}
-              onEnd={(res) => {
-                sound.stopSfx("battle-start");
+              onEnd={async (res) => {
                 if (res.winner === "player") {
                   if (res.xpGain != null && res.xpGain > 0 && currentPlayer) {
                     const ids = res.participantIds?.length ? res.participantIds : (currentPlayer.team[0] ? [currentPlayer.team[0].id] : []);
-                    if (ids.length) setTimeout(() => game.grantXpToParticipants(effectivePlayerIndex, res.xpGain!, ids), 0);
+                    if (ids.length) await game.grantXpToParticipants(effectivePlayerIndex, res.xpGain, ids);
                   }
                   const nextPokemon = pokemonIndex + 1 < trainer.team.length;
                   const nextTrainer = trainerIndex + 1 < trainers.length;
@@ -1432,6 +1458,7 @@ export default function App() {
                 } else {
                   setLeagueBattle(null);
                 }
+                sound.stopSfx("battle-start");
               }}
             />
           );

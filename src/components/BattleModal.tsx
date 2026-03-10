@@ -58,7 +58,6 @@ export default function BattleModal({ playerPokemon, enemyPokemon, playerTeam, o
   const [showSwitchPicker, setShowSwitchPicker] = useState(false);
   const [faintedLeadId, setFaintedLeadId] = useState<number | null>(null);
   const [showVoluntarySwitch, setShowVoluntarySwitch] = useState(false);
-  const [victorySummary, setVictorySummary] = useState<{ result: BattleEndResult; isCapture?: boolean } | null>(null);
   const enemyHpAfterFirstAttackRef = useRef<number>(0);
   const playerHpAfterFirstAttackRef = useRef<number>(0);
   const participantIdsRef = useRef<Set<number>>(new Set());
@@ -67,7 +66,7 @@ export default function BattleModal({ playerPokemon, enemyPokemon, playerTeam, o
   const enemyLeechDrainRef = useRef(0);
   const playerLeechDrainRef = useRef(0);
 
-  const VICTORY_DELAY_MS = 1500;
+  const VICTORY_CLOSE_MS = 500;
 
   // Do NOT sync from props after mount: parent's enemyPokemon always has full HP.
   // Resyncing would overwrite local battle damage and make the enemy "heal" on every parent re-render.
@@ -97,15 +96,6 @@ export default function BattleModal({ playerPokemon, enemyPokemon, playerTeam, o
       setShowVoluntarySwitch(false);
     }
   }, [showVoluntarySwitch, playerPokemon.id, p.id, playerPokemon]);
-
-  useEffect(() => {
-    if (!victorySummary) return;
-    const t = setTimeout(() => {
-      onEnd(victorySummary.result);
-      setVictorySummary(null);
-    }, VICTORY_DELAY_MS);
-    return () => clearTimeout(t);
-  }, [victorySummary, onEnd]);
 
   const pushLog = (line: string) =>
     setLog((l) => {
@@ -463,7 +453,14 @@ export default function BattleModal({ playerPokemon, enemyPokemon, playerTeam, o
       if (isPvP && !isTrainerBattle) {
         onEnd({ winner: "player", xpGain, participantIds, playerFinalHp: curPHp, enemyFinalHp: Math.max(0, curEHp) });
       } else {
-        setVictorySummary({ result: { winner: "player", xpGain: xpGain ?? 0, participantIds: participantIds ?? [] } });
+        pushLog("You win!");
+        const xp = xpGain ?? 0;
+        const ids = participantIds ?? [];
+        if (xp > 0 && (playerTeam ?? []).length > 0) {
+          (playerTeam ?? []).filter((m) => ids.includes(m.id)).forEach((m) => pushLog(`${m.name} gained ${xp} XP`));
+        }
+        const result: BattleEndResult = { winner: "player", xpGain: xp, participantIds: ids, playerFinalHp: curPHp, enemyFinalHp: Math.max(0, curEHp) };
+        setTimeout(() => onEnd(result), VICTORY_CLOSE_MS);
       }
       return;
     }
@@ -521,33 +518,6 @@ export default function BattleModal({ playerPokemon, enemyPokemon, playerTeam, o
             ))}
           </div>
           <button type="button" className="pixel-btn pixel-btn-primary" onClick={() => onEnd({ winner: pvpYouWon ? "player" : "enemy", playerFinalHp: displayP.hp, enemyFinalHp: displayE.hp })}>Close</button>
-        </div>
-      </div>
-    );
-  }
-
-  if (victorySummary) {
-    const { result, isCapture } = victorySummary;
-    const xpGain = result.xpGain ?? 0;
-    const participantIds = result.participantIds ?? [];
-    const participantNames = (playerTeam ?? [])
-      .filter((m) => participantIds.includes(m.id))
-      .map((m) => m.name);
-    return (
-      <div className="fixed inset-0 z-50 flex flex-col modal-backdrop overflow-y-auto p-2 sm:p-4 safe-area-bottom">
-        <div className="card-panel w-full max-w-2xl mx-auto p-6 text-white flex flex-col items-center justify-center border-2 border-amber-500/30">
-          <div className="text-2xl font-bold mb-4 text-amber-300">{isCapture ? "Gotcha!" : "You win!"}</div>
-          {xpGain > 0 && participantNames.length > 0 && (
-            <div className="w-full mb-4 p-3 rounded-lg bg-gray-800/80 border border-amber-600/40">
-              <div className="text-sm font-bold text-amber-200 mb-2">XP received</div>
-              <ul className="space-y-1 text-sm text-gray-200">
-                {participantNames.map((name, i) => (
-                  <li key={i}>{name} gained {xpGain} XP</li>
-                ))}
-              </ul>
-            </div>
-          )}
-          <div className="text-xs text-gray-400">Closing in {(VICTORY_DELAY_MS / 1000).toFixed(1)}s...</div>
         </div>
       </div>
     );
@@ -631,10 +601,14 @@ export default function BattleModal({ playerPokemon, enemyPokemon, playerTeam, o
                       const ok = await Promise.resolve(onCapture());
                       if (Boolean(ok)) {
                         pushLog("Gotcha!");
-                        await sleep(700);
                         try { onPlayerUpdate({ ...p, hp: p.hp }); } catch {}
                         const xpGain = xpForDefeatingEnemy(e.level ?? 1);
-                        setVictorySummary({ result: { winner: "player", xpGain, participantIds: Array.from(participantIdsRef.current) }, isCapture: true });
+                        const ids = Array.from(participantIdsRef.current);
+                        if (xpGain > 0 && (playerTeam ?? []).length > 0) {
+                          (playerTeam ?? []).filter((m) => ids.includes(m.id)).forEach((m) => pushLog(`${m.name} gained ${xpGain} XP`));
+                        }
+                        const result: BattleEndResult = { winner: "player", xpGain, participantIds: ids };
+                        setTimeout(() => onEnd(result), VICTORY_CLOSE_MS);
                       } else {
                         pushLog("It broke free!");
                         await sleep(400);
