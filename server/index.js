@@ -2,8 +2,15 @@ import express from "express";
 import { createServer } from "http";
 import { Server } from "socket.io";
 import { resolvePvpTurn } from "./battle.js";
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
 
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 3001;
+const ROOM_EXPIRE_MS = 5 * 60 * 1000; // 5 min after last player leaves
+const PERSIST_PATH = path.join(__dirname, "rooms.json");
+
 const app = express();
 const httpServer = createServer(app);
 
@@ -17,6 +24,7 @@ function generateRoomCode() {
 
 const COLORS = ["red", "blue", "green", "yellow"];
 const rooms = new Map();
+const roomExpireTimers = new Map();
 
 function createInitialState(roomCode, firstPlayer) {
   return {
@@ -30,6 +38,57 @@ function createInitialState(roomCode, firstPlayer) {
     evolutionNotice: null
   };
 }
+
+function scheduleRoomExpire(roomCode) {
+  const existing = roomExpireTimers.get(roomCode);
+  if (existing) clearTimeout(existing);
+  const t = setTimeout(() => {
+    roomExpireTimers.delete(roomCode);
+    rooms.delete(roomCode);
+    persistRooms(); // update file to remove expired room
+  }, ROOM_EXPIRE_MS);
+  roomExpireTimers.set(roomCode, t);
+}
+
+function cancelRoomExpire(roomCode) {
+  const t = roomExpireTimers.get(roomCode);
+  if (t) {
+    clearTimeout(t);
+    roomExpireTimers.delete(roomCode);
+  }
+}
+
+function persistRooms() {
+  try {
+    const toSave = {};
+    for (const [code, state] of rooms) {
+      if (!state.players?.length) continue;
+      toSave[code] = { ...state, players: state.players.map((p) => ({ ...p, id: null })) };
+    }
+    fs.writeFileSync(PERSIST_PATH, JSON.stringify(toSave, null, 2), "utf8");
+  } catch (e) {
+    console.error("persistRooms:", e);
+  }
+}
+
+function loadRooms() {
+  try {
+    if (!fs.existsSync(PERSIST_PATH)) return;
+    const raw = fs.readFileSync(PERSIST_PATH, "utf8");
+    const data = JSON.parse(raw);
+    for (const [code, state] of Object.entries(data)) {
+      if (state.players?.length) {
+        rooms.set(code, { ...state, players: state.players.map((p) => ({ ...p, id: null })) });
+        scheduleRoomExpire(code);
+      }
+    }
+  } catch (e) {
+    console.error("loadRooms:", e);
+  }
+}
+
+loadRooms();
+setInterval(persistRooms, 30_000);
 
 io.on("connection", (socket) => {
   socket.on("createRoom", (playerName) => {
@@ -73,12 +132,22 @@ io.on("connection", (socket) => {
       socket.emit("joinError", { message: "Room not found" });
       return;
     }
+    const name = (playerName || "Player").trim() || "Player";
+    const existingByName = state.players.find((p) => p.name.toLowerCase() === name.toLowerCase());
+
+    if (existingByName) {
+      existingByName.id = socket.id;
+      cancelRoomExpire(roomCode);
+      socket.join(roomCode);
+      socket.roomCode = roomCode;
+      io.to(roomCode).emit("state", state);
+      return;
+    }
     if (state.players.length >= 4) {
       socket.emit("joinError", { message: "Room is full" });
       return;
     }
 
-    const name = (playerName || "Player").trim() || "Player";
     const newPlayer = {
       id: socket.id,
       name,
@@ -96,6 +165,7 @@ io.on("connection", (socket) => {
       evolutionNotice: null
     };
     state.players.push(newPlayer);
+    cancelRoomExpire(roomCode);
     socket.join(roomCode);
     socket.roomCode = roomCode;
 
@@ -113,7 +183,9 @@ io.on("connection", (socket) => {
     }
     // Merge per-player state: only sender can update their own full data; for others preserve identity (name, color, team, badges, location) from server to avoid one client overwriting another.
     const mergedPlayers = (state.players || []).map((p) => {
-      const existing = current.players.find((x) => x.id === p.id);
+      const existing = p.id != null
+        ? current.players.find((x) => x.id === p.id)
+        : current.players.find((x) => (x.name || "").toLowerCase() === (p.name || "").toLowerCase());
       const isSender = p.id === socket.id;
       if (isSender) {
         return {
@@ -147,8 +219,9 @@ io.on("connection", (socket) => {
     merged.encounterLog = undefined;
     merged.pendingLearn = undefined;
     merged.evolutionNotice = undefined;
+    const toEmit = { ...merged, _fromSocketId: socket.id };
     rooms.set(roomCode, merged);
-    io.to(roomCode).emit("state", merged);
+    io.to(roomCode).emit("state", toEmit);
   });
 
   socket.on("achievement", (data) => {
@@ -268,9 +341,15 @@ io.on("connection", (socket) => {
     if (rooms.has(roomCode)) {
       const state = rooms.get(roomCode);
       clearPvpForPlayer(state, socket.id);
-      state.players = state.players.filter((p) => p.id !== socket.id);
-      if (state.players.length === 0) rooms.delete(roomCode);
-      else io.to(roomCode).emit("state", state);
+      const p = state.players.find((x) => x.id === socket.id);
+      if (p) p.id = null;
+      const anyConnected = state.players.some((x) => x.id != null);
+      if (!anyConnected) {
+        scheduleRoomExpire(roomCode);
+        persistRooms();
+      } else {
+        io.to(roomCode).emit("state", state);
+      }
     }
   });
 
@@ -279,9 +358,15 @@ io.on("connection", (socket) => {
     if (roomCode && rooms.has(roomCode)) {
       const state = rooms.get(roomCode);
       clearPvpForPlayer(state, socket.id);
-      state.players = state.players.filter((p) => p.id !== socket.id);
-      if (state.players.length === 0) rooms.delete(roomCode);
-      else io.to(roomCode).emit("state", state);
+      const p = state.players.find((x) => x.id === socket.id);
+      if (p) p.id = null;
+      const anyConnected = state.players.some((x) => x.id != null);
+      if (!anyConnected) {
+        scheduleRoomExpire(roomCode);
+        persistRooms();
+      } else {
+        io.to(roomCode).emit("state", state);
+      }
     }
   });
 });

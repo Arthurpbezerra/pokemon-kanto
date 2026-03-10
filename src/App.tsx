@@ -88,6 +88,8 @@ export type GameStateSnapshot = {
   pvpRequest: PvpRequest | null;
   pvpBattle: PvpBattle | null;
   pvpTrade: PvpTrade | null;
+  /** Set by server when state is from a stateUpdate; client uses it to avoid overwriting own identity with other client's view. */
+  _fromSocketId?: string | null;
 };
 
 const STARTER_IDS = [1, 4, 7];
@@ -98,39 +100,40 @@ const BADGES_REQUIRED_FOR_LEAGUE = 8;
 
 const LOCATIONS: Record<string, { type: "town" | "grass" | "water" | "cave"; connections: string[]; wildPool?: number[]; gym?: string | null; league?: boolean; x: number; y: number }> = {
   "Pallet Town": { type: "town", connections: ["Route 1"], gym: null, x: 18, y: 70 },
-  "Route 1": { type: "grass", connections: ["Pallet Town", "Viridian City"], wildPool: [16, 19, 21], gym: null, x: 18, y: 58 },
-  "Viridian City": { type: "town", connections: ["Route 1", "Route 2"], gym: null, x: 18, y: 44 },
-  "Route 2": { type: "grass", connections: ["Viridian City", "Pewter City"], wildPool: [16, 19, 21], gym: null, x: 28, y: 36 },
-  "Pewter City": { type: "town", connections: ["Route 2", "Mt. Moon"], gym: "Brock", x: 38, y: 28 },
+  "Route 1": { type: "grass", connections: ["Pallet Town", "Viridian City"], wildPool: [16, 19], gym: null, x: 18, y: 58 },
+  "Viridian City": { type: "town", connections: ["Route 1", "Route 2", "Viridian Gym"], gym: null, x: 18, y: 44 },
+  "Route 2": { type: "grass", connections: ["Viridian City", "Viridian Forest"], wildPool: [16, 19, 10, 13], gym: null, x: 26, y: 36 },
+  "Viridian Forest": { type: "grass", connections: ["Route 2", "Pewter City"], wildPool: [10, 13, 11, 14, 16, 25], gym: null, x: 32, y: 32 },
+  "Pewter City": { type: "town", connections: ["Viridian Forest", "Mt. Moon"], gym: "Brock", x: 38, y: 28 },
   "Mt. Moon": { type: "cave", connections: ["Pewter City", "Route 4"], wildPool: [74, 41, 35], gym: null, x: 44, y: 36 },
   "Route 4": { type: "grass", connections: ["Mt. Moon", "Cerulean City"], wildPool: [16, 21], gym: null, x: 52, y: 36 },
   "Cerulean City": { type: "town", connections: ["Route 4", "Route 24", "Route 5"], gym: "Misty", x: 62, y: 30 },
-  "Route 24": { type: "grass", connections: ["Cerulean City", "Route 25"], wildPool: [43, 60], gym: null, x: 68, y: 28 },
-  "Route 25": { type: "grass", connections: ["Route 24", "Bill's Sea Cottage"], wildPool: [43, 60], gym: null, x: 74, y: 26 },
+  "Route 24": { type: "grass", connections: ["Cerulean City", "Route 25"], wildPool: [43, 69], gym: null, x: 68, y: 28 },
+  "Route 25": { type: "grass", connections: ["Route 24", "Bill's Sea Cottage"], wildPool: [43, 69], gym: null, x: 74, y: 26 },
   "Bill's Sea Cottage": { type: "town", connections: ["Route 25"], gym: null, x: 78, y: 22 },
-  "Route 5": { type: "grass", connections: ["Cerulean City", "Vermilion City"], wildPool: [60, 118], gym: null, x: 68, y: 40 },
-  "Vermilion City": { type: "town", connections: ["Route 5", "Route 11"], gym: "Lt. Surge", x: 78, y: 52 },
-  "Route 11": { type: "grass", connections: ["Vermilion City", "Route 12"], wildPool: [129, 60], gym: null, x: 82, y: 44 },
-  "Route 12": { type: "grass", connections: ["Route 11", "Lavender Town"], wildPool: [129, 118], gym: null, x: 86, y: 36 },
-  "Lavender Town": { type: "town", connections: ["Route 12", "Route 10"], gym: null, x: 86, y: 26 },
-  "Route 10": { type: "grass", connections: ["Lavender Town", "Cerulean City"], wildPool: [41, 60], gym: null, x: 74, y: 34 },
-  "Route 7": { type: "grass", connections: ["Lavender Town", "Celadon City"], wildPool: [43, 60], gym: null, x: 68, y: 44 },
-  "Route 8": { type: "grass", connections: ["Lavender Town", "Celadon City"], wildPool: [43, 60], gym: null, x: 64, y: 50 },
-  "Celadon City": { type: "town", connections: ["Route 7", "Route 9", "Route 16"], gym: "Erika", x: 58, y: 50 },
-  "Route 9": { type: "grass", connections: ["Celadon City", "Lavender Town"], wildPool: [43, 60], gym: null, x: 66, y: 34 },
+  "Vermilion City": { type: "town", connections: ["Route 5", "Route 6", "Route 11"], gym: "Lt. Surge", x: 78, y: 52 },
+  "Route 11": { type: "grass", connections: ["Vermilion City", "Route 12"], wildPool: [16, 19, 96], gym: null, x: 82, y: 44 },
+  "Route 12": { type: "grass", connections: ["Route 11", "Lavender Town"], wildPool: [16, 43, 69], gym: null, x: 86, y: 36 },
+  "Lavender Town": { type: "town", connections: ["Route 12", "Route 10", "Route 7", "Route 8"], gym: null, x: 86, y: 26 },
+  "Route 10": { type: "grass", connections: ["Lavender Town", "Cerulean City"], wildPool: [41, 81], gym: null, x: 74, y: 34 },
+  "Route 7": { type: "grass", connections: ["Lavender Town", "Celadon City", "Saffron City"], wildPool: [43, 69], gym: null, x: 68, y: 44 },
+  "Route 8": { type: "grass", connections: ["Lavender Town", "Celadon City", "Saffron City"], wildPool: [43, 69], gym: null, x: 64, y: 50 },
+  "Celadon City": { type: "town", connections: ["Route 7", "Route 9", "Route 16", "Saffron City"], gym: "Erika", x: 58, y: 50 },
+  "Route 9": { type: "grass", connections: ["Celadon City", "Lavender Town"], wildPool: [43, 69], gym: null, x: 66, y: 34 },
   "Route 16": { type: "grass", connections: ["Celadon City", "Route 17"], wildPool: [111, 115], gym: null, x: 60, y: 58 },
   "Route 17": { type: "grass", connections: ["Route 16", "Route 18"], wildPool: [111, 115], gym: null, x: 64, y: 64 },
   "Route 18": { type: "grass", connections: ["Route 17", "Fuchsia City"], wildPool: [111, 115], gym: null, x: 68, y: 74 },
   "Fuchsia City": { type: "town", connections: ["Route 18", "Route 19"], gym: "Koga", x: 72, y: 78 },
-  "Route 19": { type: "water", connections: ["Fuchsia City", "Cinnabar Island"], wildPool: [129, 118], gym: null, x: 50, y: 86 },
-  "Route 20": { type: "water", connections: ["Fuchsia City", "Cinnabar Island"], wildPool: [129, 118], gym: null, x: 60, y: 86 },
+  "Route 19": { type: "water", connections: ["Fuchsia City", "Cinnabar Island"], wildPool: [129, 118, 72], gym: null, x: 50, y: 86 },
+  "Route 20": { type: "water", connections: ["Fuchsia City", "Cinnabar Island"], wildPool: [129, 118, 72], gym: null, x: 60, y: 86 },
   "Cinnabar Island": { type: "town", connections: ["Route 19", "Route 21"], gym: "Blaine", x: 30, y: 92 },
-  "Route 21": { type: "grass", connections: ["Cinnabar Island", "Pallet Town"], wildPool: [129, 74], gym: null, x: 22, y: 82 },
+  "Route 21": { type: "grass", connections: ["Cinnabar Island", "Pallet Town"], wildPool: [16, 21, 74], gym: null, x: 22, y: 82 },
   "Route 13": { type: "grass", connections: ["Fuchsia City", "Route 14"], wildPool: [111, 123], gym: null, x: 68, y: 72 },
   "Route 14": { type: "grass", connections: ["Route 13", "Route 15"], wildPool: [111, 123], gym: null, x: 70, y: 68 },
   "Route 15": { type: "grass", connections: ["Route 14", "Lavender Town"], wildPool: [111, 123], gym: null, x: 74, y: 58 },
-  "Saffron City": { type: "town", connections: ["Celadon City", "Route 6"], gym: "Sabrina", x: 66, y: 48 },
-  "Route 6": { type: "grass", connections: ["Saffron City", "Vermilion City"], wildPool: [60, 118], gym: null, x: 72, y: 44 },
+  "Saffron City": { type: "town", connections: ["Celadon City", "Route 5", "Route 6", "Route 7", "Route 8"], gym: "Sabrina", x: 66, y: 48 },
+  "Route 5": { type: "grass", connections: ["Cerulean City", "Vermilion City", "Saffron City"], wildPool: [16, 43, 69], gym: null, x: 68, y: 40 },
+  "Route 6": { type: "grass", connections: ["Saffron City", "Vermilion City"], wildPool: [16, 19, 21], gym: null, x: 72, y: 44 },
   "Viridian Gym": { type: "town", connections: ["Viridian City"], gym: "Giovanni", x: 18, y: 36 },
   "Indigo Plateau": { type: "town", connections: ["Viridian Gym"], gym: null, league: true, x: 28, y: 10 }
 };
@@ -246,8 +249,10 @@ function useGameState(socket: Socket | null) {
           if (p.id !== myId) return p;
           const myPrev = prev.find((x) => x.id === myId);
           if (!myPrev) return p;
+          const mergedBadges = [...new Set([...(myPrev.badges ?? []), ...(p.badges ?? [])])];
           return {
             ...myPrev,
+            badges: mergedBadges.length > 0 ? mergedBadges : (myPrev.badges ?? p.badges ?? []),
             bag: p.bag ?? myPrev.bag,
             wildEncounter: p.wildEncounter ?? myPrev.wildEncounter,
             encounterLog: p.encounterLog ?? myPrev.encounterLog,
@@ -269,13 +274,37 @@ function useGameState(socket: Socket | null) {
     }
     setPhase(s.phase);
     setRoomCode(s.roomCode || "");
-    setPlayers(playersWithBag);
+    // When state came from another client's stateUpdate, don't let it overwrite our identity (team, color, location…) so we never "become" the other player or lose wild encounters.
+    if (socket && s._fromSocketId != null && s._fromSocketId !== socket.id) {
+      setPlayers((prev) => {
+        const myId = socket.id;
+        return playersWithBag.map((p) => {
+          if (p.id !== myId) return p;
+          const myPrev = prev.find((x) => x.id === myId);
+          if (!myPrev) return p;
+          const mergedBadges = [...new Set([...(myPrev.badges ?? []), ...(p.badges ?? [])])];
+          return {
+            ...myPrev,
+            badges: mergedBadges.length > 0 ? mergedBadges : (myPrev.badges ?? p.badges ?? []),
+            bag: p.bag ?? myPrev.bag,
+            wildEncounter: myPrev.wildEncounter ?? p.wildEncounter,
+            encounterLog: myPrev.encounterLog ?? p.encounterLog,
+            pendingLearn: myPrev.pendingLearn ?? p.pendingLearn,
+            evolutionNotice: myPrev.evolutionNotice ?? p.evolutionNotice
+          };
+        });
+      });
+    } else {
+      setPlayers(playersWithBag);
+    }
     setCurrentPlayerIndex(s.currentPlayerIndex ?? 0);
     const myPlayer = socket ? playersWithBag.find((p) => p.id === socket.id) : null;
-    setWildEncounter(myPlayer?.wildEncounter ?? s.wildEncounter ?? null);
-    setEncounterLog(myPlayer?.encounterLog ?? s.encounterLog ?? []);
-    setPendingLearn(myPlayer?.pendingLearn ?? s.pendingLearn ?? null);
-    setEvolutionNotice(myPlayer?.evolutionNotice ?? s.evolutionNotice ?? null);
+    if (!(socket && s._fromSocketId != null && s._fromSocketId !== socket.id)) {
+      setWildEncounter(myPlayer?.wildEncounter ?? s.wildEncounter ?? null);
+      setEncounterLog(myPlayer?.encounterLog ?? s.encounterLog ?? []);
+      setPendingLearn(myPlayer?.pendingLearn ?? s.pendingLearn ?? null);
+      setEvolutionNotice(myPlayer?.evolutionNotice ?? s.evolutionNotice ?? null);
+    }
     setPvpRequest(s.pvpRequest ?? null);
     setPvpBattle(s.pvpBattle ?? null);
     setPvpTrade(s.pvpTrade ?? null);
@@ -1427,7 +1456,7 @@ export default function App() {
             <div className="fixed inset-0 z-[55] flex items-center justify-center bg-black/60 p-4">
               <div className="bg-gray-900 rounded-lg p-4 max-w-sm w-full text-white shadow-xl max-h-[90vh] overflow-y-auto">
                 <h3 className="text-base font-bold text-yellow-300 mb-3">Trade Pokémon</h3>
-                <p className="text-xs text-gray-400 mb-2">Choose one Pokémon to offer:</p>
+                <p className="text-muted mb-2">Choose one Pokémon to offer:</p>
                 <div className="space-y-2 mb-4">
                   {myTeam.map((pk, i) => (
                     <button
@@ -1465,6 +1494,11 @@ export default function App() {
                 <span className="font-bold text-sm text-amber-300">☰ Menu</span>
                 <button type="button" className="pixel-btn text-xs" onClick={() => setShowMenu(false)}>Close</button>
               </div>
+              {game.roomCode && game.roomCode !== "SOLO" && (
+                <p className="text-xs text-gray-300 mb-3 pb-2 border-b border-gray-600/50">
+                  Room: <strong className="text-amber-400">{game.roomCode}</strong>
+                </p>
+              )}
               <label className="flex items-center justify-between gap-2 cursor-pointer">
                 <span className="text-xs sm:text-sm text-gray-300">Sound effects</span>
                 <button
@@ -1597,57 +1631,61 @@ function HomeScreen({
   };
 
   return (
-    <div className="max-w-md mx-auto space-y-6">
-      <h2 className="text-sm sm:text-lg text-yellow-300 mb-4">Create or join a room</h2>
+    <div className="max-w-md mx-auto space-y-5">
+      <h2 className="section-title text-sm sm:text-base mb-1">Create or join a room</h2>
 
       {isLocalhost && startSingleplayer && (
-        <div className="p-4 card-panel border-2 border-amber-500/50">
-          <div className="font-bold text-xs sm:text-sm mb-2 text-amber-300">Singleplayer (localhost)</div>
-          <p className="text-[10px] sm:text-xs text-gray-400 mb-3">Play alone to test the game. No room code needed.</p>
+        <div className="p-4 card-panel border border-amber-500/40 rounded-gameLg">
+          <h3 className="section-title">Singleplayer (localhost)</h3>
+          <p className="text-muted mb-3">Play alone to test the game. No room code needed.</p>
           <input
             className="input-pixel w-full mb-3 text-sm"
             placeholder="Your name"
             value={createName}
             onChange={(e) => setCreateName(e.target.value)}
+            aria-label="Your name"
           />
-          <button className="pixel-btn pixel-btn-primary w-full" onClick={handlePlayAlone}>
+          <button type="button" className="pixel-btn pixel-btn-primary w-full" onClick={handlePlayAlone}>
             Play alone
           </button>
         </div>
       )}
 
-      <div className="p-4 card-panel">
-        <div className="font-bold text-xs sm:text-sm mb-2 text-amber-300">Create room</div>
+      <div className="p-4 card-panel rounded-gameLg">
+        <h3 className="section-title">Create room</h3>
         <input
           className="input-pixel w-full mb-3 text-sm"
           placeholder="Your name"
           value={createName}
           onChange={(e) => setCreateName(e.target.value)}
+          aria-label="Your name"
         />
-        <button className="pixel-btn w-full" onClick={handleCreate} disabled={!socket}>
+        <button type="button" className="pixel-btn w-full" onClick={handleCreate} disabled={!socket}>
           Create room
         </button>
-        <p className="text-[10px] text-gray-400 mt-2">You’ll get a code to share with others.</p>
+        <p className="text-muted mt-2">You’ll get a code to share with others.</p>
       </div>
 
-      <div className="p-4 card-panel">
-        <div className="font-bold text-xs sm:text-sm mb-2 text-amber-300">Join room</div>
+      <div className="p-4 card-panel rounded-gameLg">
+        <h3 className="section-title">Join room</h3>
         <input
           className="input-pixel w-full mb-2 text-sm"
           placeholder="Room code"
           value={joinCode}
           onChange={(e) => { setJoinCode(e.target.value.toUpperCase()); setJoinError(null); }}
+          aria-label="Room code"
         />
         <input
           className="input-pixel w-full mb-3 text-sm"
           placeholder="Your name"
           value={joinName}
           onChange={(e) => setJoinName(e.target.value)}
+          aria-label="Your name"
         />
-        <button className="pixel-btn w-full" onClick={handleJoin} disabled={!socket}>
+        <button type="button" className="pixel-btn w-full" onClick={handleJoin} disabled={!socket}>
           Join room
         </button>
-        {joinError && <p className="text-red-400 text-xs mt-2">{joinError}</p>}
+        {joinError && <p className="text-red-400 text-xs mt-2" role="alert">{joinError}</p>}
       </div>
     </div>
   );
@@ -1658,16 +1696,16 @@ function LobbyScreen({ players, addPlayer, toggleReady, startGame, roomCode, myP
   const canStart = independentStart ? players.length > 0 : (players.length > 0 && (players.every((p) => p.isReady) || players.length === 1));
   return (
     <div>
-      <div className="mb-3 text-xs sm:text-sm flex flex-wrap items-start justify-between gap-2">
+      <div className="flex flex-wrap items-start justify-between gap-2">
         <div>
-          Lobby
-        {roomCode && (
-          <span className="block mt-1 text-yellow-300">
-            {roomCode === "SOLO" ? "Singleplayer" : <>Share code: <strong>{roomCode}</strong></>}
-          </span>
-        )}
+          <h2 className="section-title mb-0">Lobby</h2>
+          {roomCode && (
+            <p className="text-amber-300 text-[10px] sm:text-xs mt-1">
+              {roomCode === "SOLO" ? "Singleplayer" : <>Share code: <strong className="text-amber-200">{roomCode}</strong></>}
+            </p>
+          )}
         {independentStart && roomCode && roomCode !== "SOLO" && (
-          <p className="text-[10px] text-gray-400 mt-1">Start when you want — you don’t need others to be ready.</p>
+          <p className="text-muted mt-1">Start when you want — you don’t need others to be ready.</p>
         )}
         </div>
         {onLeaveRoom && roomCode && (
@@ -1682,15 +1720,15 @@ function LobbyScreen({ players, addPlayer, toggleReady, startGame, roomCode, myP
       )}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
         {players.map((p) => (
-          <div key={p.id} className="card-panel p-3 rounded-lg">
-            <div className="text-xs sm:text-sm truncate">{p.name} <span className="text-[10px] sm:text-xs text-gray-300">({p.color})</span></div>
+          <div key={p.id ?? p.name} className="card-panel p-3 rounded-gameLg">
+            <p className="text-xs sm:text-sm truncate text-white">{p.name} <span className="text-muted">({p.color})</span></p>
             <div className="mt-2">
               {myPlayerId == null ? (
-                <button className="pixel-btn w-full sm:w-auto" onClick={() => toggleReady(p.id)}>{p.isReady ? "UNREADY" : "READY"}</button>
+                <button type="button" className="pixel-btn w-full sm:w-auto" onClick={() => toggleReady(p.id)}>{p.isReady ? "UNREADY" : "READY"}</button>
               ) : p.id === myPlayerId ? (
-                <button className="pixel-btn w-full sm:w-auto" onClick={() => toggleReady(p.id)}>{p.isReady ? "UNREADY" : "READY"}</button>
+                <button type="button" className="pixel-btn w-full sm:w-auto" onClick={() => toggleReady(p.id)}>{p.isReady ? "UNREADY" : "READY"}</button>
               ) : (
-                <span className="text-xs text-gray-400">{p.isReady ? "Ready" : "Not ready"}</span>
+                <span className="text-muted text-xs">{p.isReady ? "Ready" : "Not ready"}</span>
               )}
             </div>
           </div>
@@ -1698,14 +1736,15 @@ function LobbyScreen({ players, addPlayer, toggleReady, startGame, roomCode, myP
       </div>
       <div className="mt-4">
         {!independentStart && players.length > 0 && (
-          <p className="text-xs text-gray-400 mb-2">
+          <p className="text-muted mb-2">
             {players.every((p) => p.isReady)
               ? "Everyone is ready!"
               : `${players.filter((p) => p.isReady).length}/${players.length} ready`}
           </p>
         )}
         <button
-          className="pixel-btn w-full disabled:opacity-50 disabled:cursor-not-allowed"
+          className="pixel-btn pixel-btn-primary w-full disabled:opacity-50 disabled:cursor-not-allowed"
+          type="button"
           onClick={startGame}
           disabled={!canStart}
         >
@@ -1720,7 +1759,7 @@ function StarterSelectScreen({ players, selectStarter, starters, myPlayerId, onL
   return (
     <div>
       <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
-        <h2 className="text-sm sm:text-lg text-yellow-300">Choose your starter</h2>
+        <h2 className="section-title text-sm sm:text-base">Choose your starter</h2>
         {onLeaveRoom && (
           <button type="button" className="pixel-btn text-xs text-red-300 border-red-500/50 hover:bg-red-900/30" onClick={onLeaveRoom}>Leave room</button>
         )}

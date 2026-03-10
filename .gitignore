@@ -23,3 +23,6 @@ npm-debug.log*
 .env
 .env.local
 .env.*.local
+
+# Persisted room data
+server/rooms.json

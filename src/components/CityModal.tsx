@@ -39,15 +39,15 @@ export default function CityModal({
     <div className="fixed inset-0 z-40 flex items-center justify-center modal-backdrop p-3 sm:p-4 overflow-y-auto">
       <div className="card-panel p-4 w-full max-w-sm text-white border-2 border-amber-500/40">
         <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
-          <div className="text-sm sm:text-lg font-bold truncate text-amber-300 flex items-center gap-2">🏠 {name}</div>
+          <h2 className="section-title truncate flex items-center gap-2 mb-0">🏠 {name}</h2>
           <button className="pixel-btn flex-shrink-0 text-xs" onClick={onClose}>Close</button>
         </div>
-        <div className="mb-2 text-xs sm:text-sm text-gray-300">{description ?? "A small town."}</div>
-        <div className="mb-3 text-xs text-amber-200/90">💰 {coins} coins · 🎒 {pokeballCount} Poké Balls · 🏅 {badgeCount}/8 badges</div>
+        <p className="mb-2 text-xs sm:text-sm text-gray-300">{description ?? "A small town."}</p>
+        <p className="mb-3 text-muted">💰 {coins} coins · 🎒 {pokeballCount} Poké Balls · 🏅 {badgeCount}/8 badges</p>
         <div className="flex flex-col gap-2">
           <button className="pixel-btn w-full text-xs sm:text-sm" onClick={() => { if (onHeal) onHeal(); }}>💚 PokéCenter (Heal)</button>
           <div className="border border-amber-600/40 rounded-lg p-2 bg-black/20">
-            <div className="text-xs font-bold text-amber-300 mb-1">🛒 Shop</div>
+            <div className="section-title mb-1">🛒 Shop</div>
             <div className="flex items-center justify-between gap-2">
               <span className="text-xs">Poké Ball — {POKEBALL_PRICE} coin</span>
               <button
