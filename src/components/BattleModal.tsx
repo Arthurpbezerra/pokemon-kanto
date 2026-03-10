@@ -565,6 +565,14 @@ export default function BattleModal({ playerPokemon, enemyPokemon, playerTeam, o
                 <div className={`hp-bar-fill ${hpColor(displayP.hp, displayP.maxHp)} h-2.5 sm:h-3`} style={{ width: `${Math.max(0, (displayP.hp / displayP.maxHp) * 100)}%` }} />
               </div>
               <div className="text-[10px] sm:text-xs mt-0.5">{displayP.hp}/{displayP.maxHp}</div>
+              {!isPvPMode && (p.status || p.leechSeed) && (
+                <div className="flex flex-wrap gap-1 mt-1" aria-label="Status">
+                  {p.status === "paralysis" && <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-yellow-900/80 text-yellow-200">PAR</span>}
+                  {p.status === "poison" && <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-purple-900/80 text-purple-200">PSN</span>}
+                  {p.status === "sleep" && <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-900/80 text-blue-200" title={`Sleep ${p.sleepTurnsLeft ?? 0} turn(s)`}>SLP</span>}
+                  {p.leechSeed && <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-green-900/80 text-green-200">SEED</span>}
+                </div>
+              )}
             </div>
           </div>
           <div className="flex items-center gap-2 sm:gap-3 sm:justify-end">
@@ -576,6 +584,14 @@ export default function BattleModal({ playerPokemon, enemyPokemon, playerTeam, o
                 <div className={`hp-bar-fill ${hpColor(displayE.hp, displayE.maxHp)} h-2.5 sm:h-3`} style={{ width: `${Math.max(0, (displayE.hp / displayE.maxHp) * 100)}%` }} />
               </div>
               <div className="text-[10px] sm:text-xs mt-0.5">{displayE.hp}/{displayE.maxHp}</div>
+              {!isPvPMode && (e.status || e.leechSeed) && (
+                <div className="flex flex-wrap gap-1 mt-1 justify-end" aria-label="Status">
+                  {e.status === "paralysis" && <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-yellow-900/80 text-yellow-200">PAR</span>}
+                  {e.status === "poison" && <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-purple-900/80 text-purple-200">PSN</span>}
+                  {e.status === "sleep" && <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-900/80 text-blue-200" title={`Sleep ${e.sleepTurnsLeft ?? 0} turn(s)`}>SLP</span>}
+                  {e.leechSeed && <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-green-900/80 text-green-200">SEED</span>}
+                </div>
+              )}
             </div>
           </div>
         </div>

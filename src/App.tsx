@@ -1117,9 +1117,23 @@ export default function App() {
   const [leagueVictory, setLeagueVictory] = useState(false);
   const [showTeam, setShowTeam] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
+  const [showLeaveConfirm, setShowLeaveConfirm] = useState(false);
   const [showKantoMap, setShowKantoMap] = useState(false);
   const [muted, setMuted] = useState(() => sound.isMuted());
   const [achievementToast, setAchievementToast] = useState<null | (AchievementData & { id: string })>(null);
+
+  const handleConfirmLeave = () => {
+    if (socket && game.roomCode && game.roomCode !== "SOLO") socket.emit("leaveRoom");
+    game.leaveRoom();
+    setGymBattle(null);
+    setGymVictory(null);
+    setLeagueBattle(null);
+    setLeagueVictory(false);
+    setCityModal(null);
+    setShowTeam(false);
+    setShowMenu(false);
+    setShowLeaveConfirm(false);
+  };
 
   useEffect(() => {
     const s = io(WS_URL);
@@ -1225,16 +1239,7 @@ export default function App() {
             roomCode={game.roomCode}
             myPlayerId={myPlayerIdForUi}
             independentStart={isMultiplayer || isSolo}
-            onLeaveRoom={() => {
-              if (socket && game.roomCode && game.roomCode !== "SOLO") socket.emit("leaveRoom");
-              game.leaveRoom();
-              setGymBattle(null);
-              setGymVictory(null);
-              setLeagueBattle(null);
-              setLeagueVictory(false);
-              setCityModal(null);
-              setShowTeam(false);
-            }}
+            onLeaveRoom={() => setShowLeaveConfirm(true)}
           />
         )}
 
@@ -1252,16 +1257,7 @@ export default function App() {
             selectStarter={game.selectStarter}
             starters={starters}
             myPlayerId={myPlayerIdForUi}
-            onLeaveRoom={() => {
-              if (socket && game.roomCode && game.roomCode !== "SOLO") socket.emit("leaveRoom");
-              game.leaveRoom();
-              setGymBattle(null);
-              setGymVictory(null);
-              setLeagueBattle(null);
-              setLeagueVictory(false);
-              setCityModal(null);
-              setShowTeam(false);
-            }}
+            onLeaveRoom={() => setShowLeaveConfirm(true)}
           />
         )}
 
@@ -1571,6 +1567,18 @@ export default function App() {
             onClose={() => setAchievementToast(null)}
           />
         )}
+        {showLeaveConfirm && (
+          <div className="fixed inset-0 z-[70] flex items-center justify-center modal-backdrop p-4" role="dialog" aria-modal="true" aria-labelledby="leave-confirm-title">
+            <div className="card-panel p-4 w-full max-w-xs border-2 border-amber-500/40" onClick={(e) => e.stopPropagation()}>
+              <h2 id="leave-confirm-title" className="section-title mb-2">Leave room?</h2>
+              <p className="text-muted text-xs sm:text-sm mb-4">Your progress is saved. You can rejoin with the same name and room code.</p>
+              <div className="flex gap-2">
+                <button type="button" className="pixel-btn flex-1" onClick={() => setShowLeaveConfirm(false)}>Cancel</button>
+                <button type="button" className="pixel-btn flex-1 text-red-300 border-red-500/50 hover:bg-red-900/30" onClick={handleConfirmLeave}>Confirm</button>
+              </div>
+            </div>
+          </div>
+        )}
         {showMenu && (
           <div className="fixed inset-0 z-50 flex items-center justify-center modal-backdrop p-4" onClick={() => setShowMenu(false)}>
             <div className="card-panel p-4 w-full max-w-xs border-2 border-amber-500/40" onClick={(e) => e.stopPropagation()}>
@@ -1603,17 +1611,7 @@ export default function App() {
                   <button
                     type="button"
                     className="pixel-btn w-full text-xs text-red-300 border-red-500/50 hover:bg-red-900/30"
-                    onClick={() => {
-                      if (socket && game.roomCode && game.roomCode !== "SOLO") socket.emit("leaveRoom");
-                      game.leaveRoom();
-                      setShowMenu(false);
-                      setGymBattle(null);
-                      setGymVictory(null);
-                      setLeagueBattle(null);
-                      setLeagueVictory(false);
-                      setCityModal(null);
-                      setShowTeam(false);
-                    }}
+                    onClick={() => setShowLeaveConfirm(true)}
                   >
                     Leave room
                   </button>
