@@ -235,6 +235,8 @@ function useGameState(socket: Socket | null) {
   const STATE_UPDATE_DEBOUNCE_MS = 120;
   myBattleRef.current = { phase, wildEncounter };
   playersLengthRef.current = players.length;
+  const playersRef = useRef<Player[]>(players);
+  playersRef.current = players;
 
   // Restore solo game after tab was killed (e.g. minimize on mobile)
   useEffect(() => {
@@ -576,7 +578,7 @@ function useGameState(socket: Socket | null) {
   };
  
   const grantXpToTeamSlot = async (playerIdx: number, teamIndex: number, xpGain: number) => {
-    const pl = players[playerIdx];
+    const pl = playersRef.current[playerIdx];
     if (!pl) return;
     const mon = pl.team[teamIndex];
     if (!mon) return;
@@ -649,11 +651,12 @@ function useGameState(socket: Socket | null) {
   const grantXpToLead = (playerIdx: number, xpGain: number) => grantXpToTeamSlot(playerIdx, 0, xpGain);
 
   const grantXpToParticipants = async (playerIdx: number, xpGain: number, participantIds: number[]) => {
-    const pl = players[playerIdx];
-    if (!pl || !participantIds.length) return;
+    if (!participantIds.length) return;
     const ids = new Set(participantIds);
-    for (let i = 0; i < pl.team.length; i++) {
-      if (ids.has(pl.team[i].id)) await grantXpToTeamSlot(playerIdx, i, xpGain);
+    const team = playersRef.current[playerIdx]?.team;
+    if (!team?.length) return;
+    for (let i = 0; i < team.length; i++) {
+      if (ids.has(team[i].id)) await grantXpToTeamSlot(playerIdx, i, xpGain);
     }
   };
 

@@ -67,7 +67,7 @@ export default function BattleModal({ playerPokemon, enemyPokemon, playerTeam, o
   const enemyLeechDrainRef = useRef(0);
   const playerLeechDrainRef = useRef(0);
 
-  const VICTORY_DELAY_MS = 3000;
+  const VICTORY_DELAY_MS = 1500;
 
   // Do NOT sync from props after mount: parent's enemyPokemon always has full HP.
   // Resyncing would overwrite local battle damage and make the enemy "heal" on every parent re-render.
@@ -526,7 +526,7 @@ export default function BattleModal({ playerPokemon, enemyPokemon, playerTeam, o
               </ul>
             </div>
           )}
-          <div className="text-xs text-gray-400">Closing in {(VICTORY_DELAY_MS / 1000).toFixed(0)}s...</div>
+          <div className="text-xs text-gray-400">Closing in {(VICTORY_DELAY_MS / 1000).toFixed(1)}s...</div>
         </div>
       </div>
     );
