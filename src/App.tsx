@@ -237,9 +237,27 @@ function useGameState(socket: Socket | null) {
     const someoneJustJoined = s.players != null && s.players.length > playersLengthRef.current;
     const playersWithBag = (s.players ?? []).map((p: Player) => ({ ...p, bag: p.bag ?? { pokeball: INITIAL_POKEBALLS, coins: INITIAL_COINS } }));
     if (inMyBattle && (incomingClearsBattle || someoneJustJoined)) {
-      const my = socket ? playersWithBag.find((p) => p.id === socket.id) : null;
-      setPlayers(playersWithBag);
+      const myId = socket?.id;
+      // Don't apply incoming players for ourselves: keep our identity (color, team, name, badges) from
+      // current state so a bad state from the other client (e.g. after they enter battle) can't overwrite us.
+      setPlayers((prev) => {
+        if (!myId) return playersWithBag;
+        return playersWithBag.map((p) => {
+          if (p.id !== myId) return p;
+          const myPrev = prev.find((x) => x.id === myId);
+          if (!myPrev) return p;
+          return {
+            ...myPrev,
+            bag: p.bag ?? myPrev.bag,
+            wildEncounter: p.wildEncounter ?? myPrev.wildEncounter,
+            encounterLog: p.encounterLog ?? myPrev.encounterLog,
+            pendingLearn: p.pendingLearn ?? myPrev.pendingLearn,
+            evolutionNotice: p.evolutionNotice ?? myPrev.evolutionNotice
+          };
+        });
+      });
       setCurrentPlayerIndex(s.currentPlayerIndex ?? 0);
+      const my = socket ? playersWithBag.find((p) => p.id === socket.id) : null;
       setEncounterLog(my?.encounterLog ?? s.encounterLog ?? []);
       setPendingLearn(my?.pendingLearn ?? s.pendingLearn ?? null);
       setEvolutionNotice(my?.evolutionNotice ?? s.evolutionNotice ?? null);
@@ -1163,6 +1181,7 @@ export default function App() {
             name={cityModal.name}
             description={cityModal.description}
             gym={cityModal.gym}
+            gymLeaderSprite={cityModal.gym ? (GYM_LEADER_SPRITES[cityModal.gym] ?? null) : null}
             hasBadge={cityModal.gym ? (currentPlayer?.badges?.includes(cityModal.gym) ?? false) : false}
             league={cityModal.league}
             badgeCount={currentPlayer?.badges?.length ?? 0}

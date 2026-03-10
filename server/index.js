@@ -111,16 +111,35 @@ io.on("connection", (socket) => {
     if (current?.pvpBattle && current.pvpBattle.status !== "ended") {
       if (!state.pvpBattle || state.phase !== "battle") return;
     }
-    // Merge per-player state so each has independent instance (wildEncounter, encounterLog, pendingLearn, evolutionNotice)
+    // Merge per-player state: only sender can update their own full data; for others preserve identity (name, color, team, badges, location) from server to avoid one client overwriting another.
     const mergedPlayers = (state.players || []).map((p) => {
       const existing = current.players.find((x) => x.id === p.id);
       const isSender = p.id === socket.id;
+      if (isSender) {
+        return {
+          ...p,
+          wildEncounter: state.wildEncounter ?? null,
+          encounterLog: state.encounterLog ?? [],
+          pendingLearn: state.pendingLearn ?? null,
+          evolutionNotice: state.evolutionNotice ?? null
+        };
+      }
+      // For other players: keep identity from server state so a buggy/stale sender can't overwrite them
       return {
+        ...existing,
         ...p,
-        wildEncounter: isSender ? (state.wildEncounter ?? null) : (existing?.wildEncounter ?? null),
-        encounterLog: isSender ? (state.encounterLog ?? []) : (existing?.encounterLog ?? []),
-        pendingLearn: isSender ? (state.pendingLearn ?? null) : (existing?.pendingLearn ?? null),
-        evolutionNotice: isSender ? (state.evolutionNotice ?? null) : (existing?.evolutionNotice ?? null)
+        id: p.id,
+        name: existing?.name ?? p.name,
+        color: existing?.color ?? p.color,
+        team: existing?.team ?? p.team,
+        badges: existing?.badges ?? p.badges,
+        location: existing?.location ?? p.location,
+        screen: existing?.screen ?? p.screen,
+        bag: p.bag ?? existing?.bag,
+        wildEncounter: existing?.wildEncounter ?? null,
+        encounterLog: existing?.encounterLog ?? [],
+        pendingLearn: existing?.pendingLearn ?? null,
+        evolutionNotice: existing?.evolutionNotice ?? null
       };
     });
     const merged = { ...state, players: mergedPlayers };

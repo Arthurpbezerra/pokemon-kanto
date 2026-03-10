@@ -6,6 +6,7 @@ export default function CityModal({
   name,
   description,
   gym,
+  gymLeaderSprite,
   hasBadge,
   league,
   badgeCount = 0,
@@ -20,6 +21,7 @@ export default function CityModal({
   name: string;
   description?: string;
   gym?: string | null;
+  gymLeaderSprite?: string | null;
   hasBadge?: boolean;
   league?: boolean;
   badgeCount?: number;
@@ -59,11 +61,17 @@ export default function CityModal({
           </div>
           {gym && (
             hasBadge ? (
-              <div className="rounded-lg bg-amber-900/30 border border-amber-600/50 px-3 py-2 text-xs sm:text-sm text-amber-200">✓ Badge obtained ({gym})</div>
+              <div className="rounded-lg bg-amber-900/30 border border-amber-600/50 px-3 py-2 text-xs sm:text-sm text-amber-200 flex items-center gap-2">
+                {gymLeaderSprite && <img src={gymLeaderSprite} alt={gym} className="w-10 h-10 object-contain bg-gray-900 rounded flex-shrink-0" onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />}
+                ✓ Badge obtained ({gym})
+              </div>
             ) : (
-              <button className="pixel-btn pixel-btn-primary w-full text-xs sm:text-sm" onClick={() => onChallenge?.()}>
-                ⚔ Challenge Gym ({gym})
-              </button>
+              <div className="rounded-lg border border-amber-600/50 bg-amber-950/30 p-2 flex items-center gap-3">
+                {gymLeaderSprite && <img src={gymLeaderSprite} alt={gym} className="w-14 h-14 object-contain bg-gray-900 rounded flex-shrink-0" onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />}
+                <button className="pixel-btn pixel-btn-primary flex-1 text-xs sm:text-sm" onClick={() => onChallenge?.()}>
+                  ⚔ Challenge Gym ({gym})
+                </button>
+              </div>
             )
           )}
           {league && (
