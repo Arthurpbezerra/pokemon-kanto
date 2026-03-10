@@ -176,6 +176,17 @@ const GYM_LEADER_SPRITES: Record<string, string> = {
   "Champion": "https://play.pokemonshowdown.com/sprites/trainers/gen1/blue.png"
 };
 
+/** Saídas de cidades com ginásio bloqueadas até derrotar o líder (exceto Giovanni/Viridian). */
+const GYM_BLOCKED_EXITS: Record<string, string[]> = {
+  "Pewter City": ["Mt. Moon"],
+  "Cerulean City": ["Route 24", "Route 5"],
+  "Vermilion City": ["Route 11", "Route 6"],
+  "Celadon City": ["Route 9", "Route 16", "Saffron City"],
+  "Saffron City": ["Route 5", "Route 6", "Route 7", "Route 8"],
+  "Fuchsia City": ["Route 18", "Route 19"],
+  "Cinnabar Island": ["Route 19", "Route 21"]
+};
+
 /** Elite Four + Champion para a Liga (Indigo Plateau). */
 const LEAGUE_TRAINERS: { name: string; team: { id: number; level: number }[] }[] = [
   { name: "Lorelei", team: [{ id: 87, level: 56 }, { id: 91, level: 56 }] },   // Dewgong, Cloyster
@@ -472,6 +483,13 @@ function useGameState(socket: Socket | null) {
   };
 
   const movePlayer = (playerId: string, to: string) => {
+    const pl = players.find((p) => p.id === playerId);
+    if (pl) {
+      const fromLoc = LOCATIONS[pl.location];
+      if (fromLoc?.gym && fromLoc.gym !== "Giovanni" && GYM_BLOCKED_EXITS[pl.location]?.includes(to) && !pl.badges?.includes(fromLoc.gym)) {
+        return;
+      }
+    }
     setPlayers((ps) =>
       ps.map((pl) => (pl.id === playerId ? { ...pl, location: to } : pl))
     );
@@ -1228,6 +1246,12 @@ export default function App() {
                 setTimeout(() => setCityModal({ name: to, description: `${to} — a place of adventure.`, gym: loc.gym ?? null, league: loc.league ?? false }), 150);
               }
             }}
+            onStayHere={(locationName) => {
+              const loc = LOCATIONS[locationName];
+              if (loc?.type === "town") {
+                setCityModal({ name: locationName, description: `${locationName} — a place of adventure.`, gym: loc.gym ?? null, league: loc.league ?? false });
+              }
+            }}
             searchWild={game.searchWild}
             isMultiplayer={isMultiplayer}
             myPlayerId={isSolo ? currentPlayer?.id ?? null : (isMultiplayer ? currentPlayer?.id ?? null : (socket?.id ?? null))}
@@ -1820,6 +1844,7 @@ function MapScreen({
   currentPlayerIndex,
   movePlayer,
   searchWild,
+  onStayHere,
   isMultiplayer,
   myPlayerId,
   requestPvpBattle,
@@ -1830,6 +1855,7 @@ function MapScreen({
   currentPlayerIndex: number;
   movePlayer: (playerId: string, to: string) => void;
   searchWild: (playerId: string) => void;
+  onStayHere?: (locationName: string) => void;
   isMultiplayer?: boolean;
   myPlayerId?: string | null;
   requestPvpBattle?: (from: string, to: string) => void;
@@ -1888,23 +1914,38 @@ function MapScreen({
               const connLoc = LOCATIONS[c];
               const connType = connLoc ? (LOCATION_TYPE_LABELS[connLoc.type] ?? { icon: "•", label: connLoc.type }) : { icon: "•", label: "" };
               const wildInfo = connLoc?.wildPool?.length ? ` · ${connLoc.wildPool.length} wilds` : "";
+              const blocked = loc?.gym && loc.gym !== "Giovanni" && GYM_BLOCKED_EXITS[current.location]?.includes(c) && !current.badges?.includes(loc.gym);
               return (
                 <div key={c} className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 bg-gray-700/80 hover:bg-gray-700 p-2.5 rounded-lg border border-gray-600/50">
                   <div className="flex items-center gap-2 min-w-0 flex-1">
                     <span className="text-base flex-shrink-0" title={connType.label}>{connType.icon}</span>
                     <div className="min-w-0">
                       <div className="font-bold text-xs sm:text-base truncate text-white">{c}</div>
-                      <div className="text-[10px] sm:text-xs text-gray-400 truncate">{connType.label}{wildInfo}</div>
+                      <div className="text-[10px] sm:text-xs text-gray-400 truncate">{connType.label}{wildInfo}{blocked ? " · Defeat the Gym Leader first" : ""}</div>
                     </div>
                     <span className="text-gray-500 flex-shrink-0 sm:ml-1">→</span>
                   </div>
-                  <button className="pixel-btn w-full sm:w-auto flex-shrink-0 text-xs sm:text-sm" onClick={() => movePlayer(current.id, c)}>Go</button>
+                  <button
+                    className="pixel-btn w-full sm:w-auto flex-shrink-0 text-xs sm:text-sm"
+                    disabled={!!blocked}
+                    title={blocked ? `Defeat ${loc?.gym} first to go to ${c}` : undefined}
+                    onClick={() => !blocked && movePlayer(current.id, c)}
+                  >
+                    Go
+                  </button>
                 </div>
               );
             })}
           </div>
           <div className="mt-3 pt-3 border-t border-gray-600/50 flex flex-col sm:flex-row gap-2">
-            <button className="pixel-btn flex-1 text-xs sm:text-sm bg-gray-600/80" onClick={() => {}}>Stay here</button>
+            {loc?.type === "town" && (
+              <button
+                className="pixel-btn flex-1 text-xs sm:text-sm bg-gray-600/80"
+                onClick={() => onStayHere?.(current.location)}
+              >
+                Stay here
+              </button>
+            )}
             {loc?.wildPool && loc.wildPool.length > 0 && (
               <button className="pixel-btn pixel-btn-primary flex-1 text-xs sm:text-sm" onClick={() => searchWild(current.id)}>
                 {loc.type === "cave" ? "⛰" : loc.type === "water" ? "🌊" : "🌿"} Search for wild
