@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { calculateDamage, calculateDamageWithTypes, whoGoesFirst, getMoveStatusEffect, isImmuneToStatus, effectiveSpeed, type StatusType } from "../engine/battle";
+import { calculateDamage, calculateDamageWithTypes, whoGoesFirst, getMoveStatusEffect, isImmuneToStatus, effectiveSpeed, getMoveDrainRatio, type StatusType } from "../engine/battle";
 import { getMoveData, formatMoveName, xpForDefeatingEnemy } from "../api/pokeapi";
 
 type PokemonInstance = {
@@ -169,6 +169,7 @@ export default function BattleModal({ playerPokemon, enemyPokemon, playerTeam, o
     };
 
     const applyAttack = (attackerIsPlayer: boolean, mvPower: number, mvName?: string, mvClass: string = "physical", moveType?: string, defenderTypes?: string[]) => {
+      const drainRatio = getMoveDrainRatio(mvName ?? "");
       if (attackerIsPlayer) {
         const atkBase = p.stats ?? { attack: 5, defense: 5, speed: 5 };
         const defBase = e.stats ?? { attack: 5, defense: 5, speed: 5 };
@@ -185,6 +186,17 @@ export default function BattleModal({ playerPokemon, enemyPokemon, playerTeam, o
           pushLog(`${p.name} used ${mvName ?? "Attack"} and dealt ${res.damage}${res.isCrit ? " (CRIT)" : ""}.${effectivenessMsg(res.effectiveness)}`);
           return { ...cur, hp: newHp };
         });
+        if (drainRatio > 0 && res.damage > 0) {
+          const heal = Math.min((p.maxHp ?? 10) - p.hp, Math.max(0, Math.floor(res.damage * drainRatio)));
+          if (heal > 0) {
+            setP((cur) => {
+              const newHp = Math.min(cur.maxHp ?? 10, cur.hp + heal);
+              pushLog(`${cur.name} absorbed health! (+${heal})`);
+              try { onPlayerUpdate({ ...cur, hp: newHp }); } catch {}
+              return { ...cur, hp: newHp };
+            });
+          }
+        }
       } else {
         const atkBaseE = e.stats ?? { attack: 5, defense: 5, speed: 5 };
         const defBaseP = p.stats ?? { attack: 5, defense: 5, speed: 5 };
@@ -202,6 +214,15 @@ export default function BattleModal({ playerPokemon, enemyPokemon, playerTeam, o
           pushLog(`${e.name} used ${mvName ?? "Attack"} and dealt ${res.damage}${res.isCrit ? " (CRIT)" : ""}.${effectivenessMsg(res.effectiveness)}`);
           return updated;
         });
+        if (drainRatio > 0 && res.damage > 0) {
+          const heal = Math.min((e.maxHp ?? 10) - e.hp, Math.max(0, Math.floor(res.damage * drainRatio)));
+          if (heal > 0) {
+            setE((cur) => {
+              pushLog(`${cur.name} absorbed health! (+${heal})`);
+              return { ...cur, hp: Math.min(cur.maxHp ?? 10, cur.hp + heal) };
+            });
+          }
+        }
       }
     };
 

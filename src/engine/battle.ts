@@ -128,3 +128,21 @@ export function effectiveSpeed(speed: number, status?: string | null): number {
   if (status === "paralysis") return Math.max(1, Math.floor(speed / 2));
   return speed;
 }
+
+/** Golpes que drenam % do dano causado como HP (lifesteal). Ratio 0–1 (ex: 0.5 = 50%). */
+const DRAIN_MOVES: Record<string, number> = {
+  "absorb": 0.5,
+  "mega-drain": 0.5,
+  "giga-drain": 0.5,
+  "leech-life": 0.5,
+  "drain-punch": 0.5,
+  "dream-eater": 0.5,
+  "parabolic-charge": 0.5,
+  "oblivion-wing": 0.75,
+  "draining-kiss": 0.75
+};
+
+export function getMoveDrainRatio(moveName: string): number {
+  const key = (moveName || "").toLowerCase().replace(/\s+/g, "-");
+  return DRAIN_MOVES[key] ?? 0;
+}
