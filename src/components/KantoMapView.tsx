@@ -1,4 +1,4 @@
-import React, { useMemo, useEffect } from "react";
+import React, { useMemo, useEffect, useState, useRef } from "react";
 
 export type LocationInfo = {
   type: "town" | "grass" | "water" | "cave";
@@ -15,7 +15,7 @@ const LOCATION_TYPE_STYLE: Record<string, { fill: string; stroke: string; r: num
   cave: { fill: "#78716c", stroke: "#57534e", r: 3.5 },
 };
 
-/** Grid layout: (col, row). North = small row, West = small col. Connected locations share row or col where possible for clean perpendicular streets. */
+/** Grid layout: (col, row). North = small row, West = small col. Vertical spine (R1, R2, Viridian) left; R7/R8 central block, not overlapping R1. */
 const GRID_COLS = 22;
 const GRID_ROWS = 20;
 const GRID_STEP = 10;
@@ -46,10 +46,10 @@ const GRID_POS: Record<string, { col: number; row: number }> = {
   "Route 12": { col: 18, row: 10 },
   "Lavender Town": { col: 16, row: 10 },
   "Route 10": { col: 18, row: 8 },
-  "Route 7": { col: 12, row: 6 },
-  "Route 8": { col: 10, row: 6 },
+  "Route 7": { col: 12, row: 8 },
+  "Route 8": { col: 14, row: 8 },
   "Celadon City": { col: 10, row: 10 },
-  "Route 9": { col: 12, row: 8 },
+  "Route 9": { col: 12, row: 9 },
   "Route 16": { col: 10, row: 12 },
   "Route 17": { col: 10, row: 14 },
   "Route 18": { col: 12, row: 14 },
@@ -79,13 +79,24 @@ function getGridPos(name: string, loc: LocationInfo): { col: number; row: number
   };
 }
 
+export type OtherPlayer = { name: string; color: string; location: string };
+
+const PLAYER_COLORS: Record<string, string> = {
+  red: "#ef4444",
+  blue: "#3b82f6",
+  green: "#22c55e",
+  yellow: "#eab308",
+};
+
 export default function KantoMapView({
   locations,
   currentLocation,
+  otherPlayers = [],
   onClose,
 }: {
   locations: Record<string, LocationInfo>;
   currentLocation: string;
+  otherPlayers?: OtherPlayer[];
   onClose: () => void;
 }) {
   const entries = useMemo(() => Object.entries(locations), [locations]);
@@ -128,6 +139,55 @@ export default function KantoMapView({
       document.body.style.overflow = prev;
     };
   }, []);
+
+  const currentPos = nodePositions[currentLocation];
+  const prevLocationRef = useRef(currentLocation);
+  const [moveFrom, setMoveFrom] = useState<{ x: number; y: number } | null>(null);
+  const [tokenPos, setTokenPos] = useState<{ x: number; y: number } | null>(currentPos ?? null);
+
+  useEffect(() => {
+    if (!currentPos) {
+      setTokenPos(null);
+      setMoveFrom(null);
+      prevLocationRef.current = currentLocation;
+      return;
+    }
+    const prev = prevLocationRef.current;
+    if (prev !== currentLocation) {
+      const from = nodePositions[prev];
+      if (from) {
+        setMoveFrom(from);
+        setTokenPos(from);
+        const duration = 400;
+        const start = performance.now();
+        const run = (t: number) => {
+          const elapsed = t - start;
+          const progress = Math.min(1, elapsed / duration);
+          const ease = 1 - (1 - progress) * (1 - progress);
+          setTokenPos({
+            x: from.x + (currentPos.x - from.x) * ease,
+            y: from.y + (currentPos.y - from.y) * ease,
+          });
+          if (progress < 1) requestAnimationFrame(run);
+          else {
+            setMoveFrom(null);
+            setTokenPos(currentPos);
+            prevLocationRef.current = currentLocation;
+          }
+        };
+        requestAnimationFrame(run);
+      } else {
+        setTokenPos(currentPos);
+        setMoveFrom(null);
+        prevLocationRef.current = currentLocation;
+      }
+    } else {
+      setTokenPos(currentPos);
+      setMoveFrom(null);
+    }
+  }, [currentLocation, currentPos, nodePositions]);
+
+  const displayPos = tokenPos ?? currentPos;
 
   return (
     <div
@@ -217,6 +277,39 @@ export default function KantoMapView({
                 </g>
               );
             })}
+
+            {/* Other players */}
+            {otherPlayers.map((op, idx) => {
+              const pos = nodePositions[op.location];
+              if (!pos) return null;
+              const offset = (idx + 1) * 3;
+              const fill = PLAYER_COLORS[op.color] ?? "#94a3b8";
+              return (
+                <g key={`other-${op.name}-${idx}`}>
+                  <circle cx={pos.x + offset} cy={pos.y - 2} r={2.2} fill={fill} stroke="#1c1917" strokeWidth={0.6} opacity={0.85} />
+                  <text x={pos.x + offset} y={pos.y - 5} textAnchor="middle" fill={fill} fontSize={2.2} fontWeight="bold" opacity={0.9}>{op.name}</text>
+                </g>
+              );
+            })}
+
+            {/* Player token (board-game style piece with movement animation) */}
+            {displayPos && (
+              <g
+                className="kanto-map-player-token"
+                style={{ animation: moveFrom ? "none" : "kanto-token-pulse 1.5s ease-in-out infinite" }}
+              >
+                <circle
+                  cx={displayPos.x}
+                  cy={displayPos.y}
+                  r={3.5}
+                  fill="#fef3c7"
+                  stroke="#f59e0b"
+                  strokeWidth={1.2}
+                  filter="url(#kanto-map-glow)"
+                />
+                <circle cx={displayPos.x} cy={displayPos.y} r={2} fill="#fbbf24" opacity={0.9} />
+              </g>
+            )}
           </svg>
         </div>
         <p className="mt-3 text-xs sm:text-sm text-amber-200/90">

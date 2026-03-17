@@ -6,6 +6,7 @@
  */
 
 const STORAGE_MUTE = "pokemon-kanto-mute";
+const STORAGE_THEME_MUTE = "pokemon-kanto-theme-mute";
 
 const SOUND_KEYS = ["battle-start", "capture", "level-up", "evolution", "achievement", "gym-victory", "attack", "run", "button"] as const;
 export type SfxKey = (typeof SOUND_KEYS)[number];
@@ -40,6 +41,37 @@ export function toggleMute(): boolean {
     localStorage.setItem(STORAGE_MUTE, muted ? "1" : "0");
   } catch {}
   return muted;
+}
+
+function getStoredThemeMute(): boolean {
+  try {
+    return localStorage.getItem(STORAGE_THEME_MUTE) === "1";
+  } catch {
+    return false;
+  }
+}
+
+let themeMuted = getStoredThemeMute();
+
+export function isThemeMuted(): boolean {
+  return themeMuted;
+}
+
+export function setThemeMuted(value: boolean): void {
+  themeMuted = value;
+  try {
+    localStorage.setItem(STORAGE_THEME_MUTE, value ? "1" : "0");
+  } catch {}
+  if (value) stopMusic();
+}
+
+export function toggleThemeMuted(): boolean {
+  themeMuted = !themeMuted;
+  try {
+    localStorage.setItem(STORAGE_THEME_MUTE, themeMuted ? "1" : "0");
+  } catch {}
+  if (themeMuted) stopMusic();
+  return themeMuted;
 }
 
 const VOLUME = 0.7;
@@ -168,7 +200,7 @@ export function playMusicWhenReady(url: string, loop = false): void {
   if (!audioUnlocked) unlockAudio();
   if (!bgm) {
     bgm = new Audio();
-    bgm.volume = 0.5;
+    bgm.volume = 0.1;
   }
   if (!loop && currentMusicUrl === url && !bgm.paused) return;
   currentMusicUrl = url;
@@ -184,4 +216,14 @@ export function stopMusic(): void {
     bgm.pause();
     bgm.currentTime = 0;
   }
+  currentMusicUrl = null;
+}
+
+/** Theme BGM: 33 - Calm Village.ogg (looped). Call when entering game. Respects theme-mute. */
+const THEME_FILENAME = "33 - Calm Village.ogg";
+
+export function startThemeMusic(): void {
+  if (themeMuted) return;
+  const url = `${basePath}/${encodeURIComponent(THEME_FILENAME)}`;
+  playMusicWhenReady(url, true);
 }

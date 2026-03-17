@@ -1,6 +1,15 @@
 import React from "react";
 
-const POKEBALL_PRICE = 1;
+type ShopItem = { key: string; label: string; price: number; icon: string };
+
+const SHOP_ITEMS: ShopItem[] = [
+  { key: "pokeball",    label: "Poké Ball",    price: 1, icon: "⚪" },
+  { key: "greatball",   label: "Great Ball",   price: 3, icon: "🔵" },
+  { key: "ultraball",   label: "Ultra Ball",   price: 5, icon: "🟡" },
+  { key: "potion",      label: "Potion",       price: 2, icon: "🧪" },
+  { key: "superpotion", label: "Super Potion", price: 4, icon: "💊" },
+  { key: "repel",       label: "Repel",        price: 3, icon: "🛡" },
+];
 
 export default function CityModal({
   name,
@@ -15,8 +24,8 @@ export default function CityModal({
   onChallengeLeague,
   onHeal,
   coins = 0,
-  pokeballCount = 0,
-  onBuyPokeball
+  bag,
+  onBuyItem
 }: {
   name: string;
   description?: string;
@@ -30,35 +39,43 @@ export default function CityModal({
   onChallengeLeague?: () => void;
   onHeal?: () => void;
   coins?: number;
-  pokeballCount?: number;
-  onBuyPokeball?: () => boolean;
+  bag?: Record<string, number>;
+  onBuyItem?: (item: string, price: number) => boolean;
 }) {
-  const canBuy = coins >= POKEBALL_PRICE && onBuyPokeball;
   const canEnterLeague = league && badgeCount >= 8 && onChallengeLeague;
   const isViridianGym = gym === "Giovanni";
   const canChallengeGym = gym && !hasBadge && (!isViridianGym || badgeCount >= 7);
+  const pokeballCount = (bag?.pokeball ?? 0) + (bag?.greatball ?? 0) + (bag?.ultraball ?? 0);
   return (
     <div className="fixed inset-0 z-40 flex items-center justify-center modal-backdrop p-3 sm:p-4 overflow-y-auto">
-      <div className="card-panel p-4 w-full max-w-sm text-white border-2 border-amber-500/40">
+      <div className="card-panel p-4 w-full max-w-sm text-white border-2 border-amber-500/40 max-h-[90vh] overflow-y-auto">
         <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
           <h2 className="section-title truncate flex items-center gap-2 mb-0">🏠 {name}</h2>
           <button className="pixel-btn flex-shrink-0 text-xs" onClick={onClose}>Close</button>
         </div>
         <p className="mb-2 text-xs sm:text-sm text-gray-300">{description ?? "A small town."}</p>
-        <p className="mb-3 text-muted">💰 {coins} coins · 🎒 {pokeballCount} Poké Balls · 🏅 {badgeCount}/8 badges</p>
+        <p className="mb-3 text-muted">💰 {coins} coins · 🎒 {pokeballCount} balls · 🏅 {badgeCount}/8 badges</p>
         <div className="flex flex-col gap-2">
           <button className="pixel-btn w-full text-xs sm:text-sm" onClick={() => { if (onHeal) onHeal(); }}>💚 PokéCenter (Heal)</button>
           <div className="border border-amber-600/40 rounded-lg p-2 bg-black/20">
             <div className="section-title mb-1">🛒 Shop</div>
-            <div className="flex items-center justify-between gap-2">
-              <span className="text-xs">Poké Ball — {POKEBALL_PRICE} coin</span>
-              <button
-                className="pixel-btn text-xs flex-shrink-0"
-                disabled={!canBuy}
-                onClick={() => canBuy && onBuyPokeball?.()}
-              >
-                Buy
-              </button>
+            <div className="flex flex-col gap-1.5">
+              {SHOP_ITEMS.map((item) => {
+                const owned = bag?.[item.key] ?? 0;
+                const canBuy = coins >= item.price && onBuyItem;
+                return (
+                  <div key={item.key} className="flex items-center justify-between gap-2">
+                    <span className="text-xs flex-1">{item.icon} {item.label} — {item.price}c <span className="text-gray-500">({owned})</span></span>
+                    <button
+                      className="pixel-btn text-xs flex-shrink-0 py-1 min-h-[32px]"
+                      disabled={!canBuy}
+                      onClick={() => canBuy && onBuyItem?.(item.key, item.price)}
+                    >
+                      Buy
+                    </button>
+                  </div>
+                );
+              })}
             </div>
           </div>
           {gym && (
@@ -101,4 +118,3 @@ export default function CityModal({
     </div>
   );
 }
-

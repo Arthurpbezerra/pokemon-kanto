@@ -29,6 +29,7 @@ type Pokemon = {
   moves?: string[];
   isStarter?: boolean;
   isFainted?: boolean;
+  isShiny?: boolean;
 };
 
 export type PlayerScreen = "lobby" | "starter" | "map";
@@ -37,6 +38,40 @@ const MAX_TEAM_SIZE = 6;
 const INITIAL_POKEBALLS = 10;
 const INITIAL_COINS = 10;
 const POKEBALL_PRICE = 1;
+const GREAT_BALL_PRICE = 3;
+const ULTRA_BALL_PRICE = 5;
+const POTION_PRICE = 2;
+const SUPER_POTION_PRICE = 4;
+const REPEL_PRICE = 3;
+const SHINY_CHANCE = 1 / 256;
+const WILD_COIN_REWARD = 1;
+const GYM_COIN_REWARD = 15;
+const LEAGUE_COIN_REWARD = 30;
+
+type Bag = {
+  pokeball: number;
+  greatball: number;
+  ultraball: number;
+  potion: number;
+  superpotion: number;
+  repel: number;
+  coins: number;
+};
+
+const DEFAULT_BAG: Bag = { pokeball: INITIAL_POKEBALLS, greatball: 0, ultraball: 0, potion: 3, superpotion: 0, repel: 0, coins: INITIAL_COINS };
+
+function normalizeBag(bag: any): Bag {
+  if (!bag) return { ...DEFAULT_BAG };
+  return {
+    pokeball: bag.pokeball ?? INITIAL_POKEBALLS,
+    greatball: bag.greatball ?? 0,
+    ultraball: bag.ultraball ?? 0,
+    potion: bag.potion ?? 0,
+    superpotion: bag.superpotion ?? 0,
+    repel: bag.repel ?? 0,
+    coins: bag.coins ?? INITIAL_COINS,
+  };
+}
 
 type Player = {
   id: string;
@@ -48,7 +83,10 @@ type Player = {
   location: string;
   team: Pokemon[];
   badges: string[];
-  bag?: { pokeball: number; coins: number };
+  bag?: Bag;
+  pokedex?: { seen: number[]; caught: number[] };
+  /** When true, Pokémon that didn't fight get 50% of battle XP (Exp Share). Default true. */
+  expShare?: boolean;
   wildEncounter?: null | { pokemon: Pokemon; location: string; triggeredByPlayerId?: string };
   encounterLog?: string[];
   pendingLearn?: null | { playerIndex: number; pokemonIndex: number; newMove: string; newLevel: number; remainingMoves?: string[] };
@@ -102,6 +140,7 @@ type LocationDef = {
   type: "town" | "grass" | "water" | "cave";
   connections: string[];
   wildPool?: number[];
+  nightPool?: number[];
   minLevel?: number;
   maxLevel?: number;
   gym?: string | null;
@@ -110,15 +149,25 @@ type LocationDef = {
   y: number;
 };
 
+function isNightTime(): boolean {
+  const h = new Date().getHours();
+  return h < 6 || h >= 20;
+}
+
+function getWildPool(loc: LocationDef): number[] {
+  if (isNightTime() && loc.nightPool && loc.nightPool.length > 0) return loc.nightPool;
+  return loc.wildPool ?? [];
+}
+
 /** Níveis por local (progressão estilo R/B/Y). Sem min/max = fallback 3–7. */
 const LOCATIONS: Record<string, LocationDef> = {
   "Pallet Town": { type: "town", connections: ["Route 1"], gym: null, x: 18, y: 70 },
-  "Route 1": { type: "grass", connections: ["Pallet Town", "Viridian City"], wildPool: [16, 19], minLevel: 2, maxLevel: 5, gym: null, x: 18, y: 58 },
+  "Route 1": { type: "grass", connections: ["Pallet Town", "Viridian City"], wildPool: [16, 19], nightPool: [19, 41, 163], minLevel: 2, maxLevel: 5, gym: null, x: 18, y: 58 },
   "Viridian City": { type: "town", connections: ["Route 1", "Route 2", "Viridian Gym"], gym: null, x: 18, y: 44 },
-  "Route 2": { type: "grass", connections: ["Viridian City", "Viridian Forest"], wildPool: [16, 19, 10, 13], minLevel: 3, maxLevel: 6, gym: null, x: 26, y: 36 },
-  "Viridian Forest": { type: "grass", connections: ["Route 2", "Pewter City"], wildPool: [10, 13, 11, 14, 16, 25], minLevel: 3, maxLevel: 6, gym: null, x: 32, y: 32 },
+  "Route 2": { type: "grass", connections: ["Viridian City", "Viridian Forest"], wildPool: [16, 19, 10, 13], nightPool: [19, 41, 10, 13], minLevel: 3, maxLevel: 6, gym: null, x: 26, y: 36 },
+  "Viridian Forest": { type: "grass", connections: ["Route 2", "Pewter City"], wildPool: [10, 13, 11, 14, 16, 25], nightPool: [10, 11, 14, 41, 48], minLevel: 3, maxLevel: 6, gym: null, x: 32, y: 32 },
   "Pewter City": { type: "town", connections: ["Viridian Forest", "Mt. Moon"], gym: "Brock", x: 38, y: 28 },
-  "Mt. Moon": { type: "cave", connections: ["Pewter City", "Route 4"], wildPool: [74, 41, 35, 46], minLevel: 6, maxLevel: 11, gym: null, x: 44, y: 36 },
+  "Mt. Moon": { type: "cave", connections: ["Pewter City", "Route 4"], wildPool: [74, 41, 35, 46], nightPool: [41, 74, 35, 92], minLevel: 6, maxLevel: 11, gym: null, x: 44, y: 36 },
   "Route 4": { type: "grass", connections: ["Mt. Moon", "Cerulean City"], wildPool: [16, 21, 46], minLevel: 6, maxLevel: 10, gym: null, x: 52, y: 36 },
   "Cerulean City": { type: "town", connections: ["Route 4", "Route 24", "Route 5"], gym: "Misty", x: 62, y: 30 },
   "Route 24": { type: "grass", connections: ["Cerulean City", "Route 25"], wildPool: [43, 69, 16], minLevel: 6, maxLevel: 10, gym: null, x: 68, y: 28 },
@@ -187,13 +236,25 @@ const GYM_BLOCKED_EXITS: Record<string, string[]> = {
   "Cinnabar Island": ["Route 19", "Route 21"]
 };
 
+/** Rival/trainer battles on specific routes. Trigger once per location. */
+const ROUTE_TRAINERS: Record<string, { name: string; sprite: string; team: { id: number; level: number }[] }> = {
+  "Route 4":  { name: "Bug Catcher", sprite: "https://play.pokemonshowdown.com/sprites/trainers/gen1/bugcatcher.png", team: [{ id: 12, level: 10 }, { id: 15, level: 10 }] },
+  "Route 9":  { name: "Hiker", sprite: "https://play.pokemonshowdown.com/sprites/trainers/gen1/hiker.png", team: [{ id: 74, level: 15 }, { id: 75, level: 17 }] },
+  "Route 11": { name: "Gambler", sprite: "https://play.pokemonshowdown.com/sprites/trainers/gen1/gambler.png", team: [{ id: 100, level: 18 }, { id: 101, level: 20 }] },
+  "Route 12": { name: "Fisher", sprite: "https://play.pokemonshowdown.com/sprites/trainers/gen1/fisher.png", team: [{ id: 129, level: 15 }, { id: 130, level: 22 }] },
+  "Route 16": { name: "Biker", sprite: "https://play.pokemonshowdown.com/sprites/trainers/gen1/biker.png", team: [{ id: 109, level: 25 }, { id: 110, level: 28 }] },
+  "Route 17": { name: "Cue Ball", sprite: "https://play.pokemonshowdown.com/sprites/trainers/gen1/biker.png", team: [{ id: 57, level: 28 }, { id: 62, level: 30 }] },
+  "Route 13": { name: "Bird Keeper", sprite: "https://play.pokemonshowdown.com/sprites/trainers/gen1/birdkeeper.png", team: [{ id: 18, level: 29 }, { id: 22, level: 31 }] },
+  "Route 15": { name: "Beauty", sprite: "https://play.pokemonshowdown.com/sprites/trainers/gen1/beauty.png", team: [{ id: 36, level: 28 }, { id: 40, level: 30 }] },
+};
+
 /** Elite Four + Champion para a Liga (Indigo Plateau). */
 const LEAGUE_TRAINERS: { name: string; team: { id: number; level: number }[] }[] = [
-  { name: "Lorelei", team: [{ id: 87, level: 56 }, { id: 91, level: 56 }] },   // Dewgong, Cloyster
-  { name: "Bruno", team: [{ id: 95, level: 56 }, { id: 68, level: 58 }] },     // Onix, Machamp
-  { name: "Agatha", team: [{ id: 94, level: 58 }, { id: 42, level: 56 }] },     // Gengar, Golbat
-  { name: "Lance", team: [{ id: 130, level: 60 }, { id: 148, level: 58 }] },   // Gyarados, Dragonair
-  { name: "Champion", team: [{ id: 18, level: 61 }, { id: 65, level: 63 }, { id: 59, level: 61 }] }  // Pidgeot, Alakazam, Arcanine
+  { name: "Lorelei", team: [{ id: 87, level: 54 }, { id: 91, level: 53 }, { id: 80, level: 54 }, { id: 124, level: 56 }, { id: 131, level: 56 }] },
+  { name: "Bruno", team: [{ id: 95, level: 53 }, { id: 107, level: 55 }, { id: 106, level: 55 }, { id: 95, level: 56 }, { id: 68, level: 58 }] },
+  { name: "Agatha", team: [{ id: 94, level: 56 }, { id: 42, level: 56 }, { id: 93, level: 55 }, { id: 110, level: 58 }, { id: 94, level: 60 }] },
+  { name: "Lance", team: [{ id: 130, level: 58 }, { id: 148, level: 56 }, { id: 148, level: 56 }, { id: 142, level: 58 }, { id: 149, level: 62 }] },
+  { name: "Champion", team: [{ id: 18, level: 61 }, { id: 65, level: 59 }, { id: 112, level: 61 }, { id: 130, level: 61 }, { id: 59, level: 63 }, { id: 3, level: 65 }] }
 ];
 
 const LOCATION_TYPE_LABELS: Record<string, { icon: string; label: string; bg: string }> = {
@@ -227,6 +288,7 @@ function useGameState(socket: Socket | null) {
   const [pvpBattle, setPvpBattle] = useState<PvpBattle | null>(null);
   const [pvpTrade, setPvpTrade] = useState<PvpTrade | null>(null);
   const [pendingReplaceCapture, setPendingReplaceCapture] = useState<null | { pokemon: Pokemon; playerIndex: number }>(null);
+  const pendingLevelUpsRef = useRef<Array<{ playerIdx: number; teamIndex: number; newLevel: number; monId: number; currentMoves: string[] }>>([]);
   const skipEmitRef = useRef(false);
   const skipEmitAfterPvpAcceptRef = useRef(false);
   const stateUpdateTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -247,7 +309,7 @@ function useGameState(socket: Socket | null) {
       if (data?.roomCode === "SOLO" && Array.isArray(data.players) && data.players.length > 0) {
         setRoomCode("SOLO");
         setPhase(data.phase === "battle" ? "map" : (data.phase || "map"));
-        setPlayers(data.players.map((p: Player) => ({ ...p, bag: p.bag ?? { pokeball: INITIAL_POKEBALLS, coins: INITIAL_COINS } })));
+        setPlayers(data.players.map((p: Player) => ({ ...p, bag: normalizeBag(p.bag) })));
         setCurrentPlayerIndex(data.currentPlayerIndex ?? 0);
         setWildEncounter(null);
       }
@@ -273,7 +335,7 @@ function useGameState(socket: Socket | null) {
     const inMyBattle = socket && myBattleRef.current.wildEncounter?.triggeredByPlayerId === socket.id;
     const incomingClearsBattle = s.phase !== "battle" || !s.wildEncounter;
     const someoneJustJoined = s.players != null && s.players.length > playersLengthRef.current;
-    const playersWithBag = (s.players ?? []).map((p: Player) => ({ ...p, bag: p.bag ?? { pokeball: INITIAL_POKEBALLS, coins: INITIAL_COINS } }));
+    const playersWithBag = (s.players ?? []).map((p: Player) => ({ ...p, bag: normalizeBag(p.bag) }));
     if (inMyBattle && (incomingClearsBattle || someoneJustJoined)) {
       const myId = socket?.id;
       // Don't apply incoming players for ourselves: keep our identity (color, team, name, badges) from
@@ -289,6 +351,7 @@ function useGameState(socket: Socket | null) {
             ...myPrev,
             badges: mergedBadges.length > 0 ? mergedBadges : (myPrev.badges ?? p.badges ?? []),
             bag: p.bag ?? myPrev.bag,
+            expShare: myPrev.expShare !== undefined ? myPrev.expShare : p.expShare,
             wildEncounter: p.wildEncounter ?? myPrev.wildEncounter,
             encounterLog: p.encounterLog ?? myPrev.encounterLog,
             pendingLearn: p.pendingLearn ?? myPrev.pendingLearn,
@@ -322,6 +385,7 @@ function useGameState(socket: Socket | null) {
             ...myPrev,
             badges: mergedBadges.length > 0 ? mergedBadges : (myPrev.badges ?? p.badges ?? []),
             bag: p.bag ?? myPrev.bag,
+            expShare: myPrev.expShare !== undefined ? myPrev.expShare : p.expShare,
             wildEncounter: myPrev.wildEncounter ?? p.wildEncounter,
             encounterLog: myPrev.encounterLog ?? p.encounterLog,
             pendingLearn: myPrev.pendingLearn ?? p.pendingLearn,
@@ -423,7 +487,7 @@ function useGameState(socket: Socket | null) {
         location: "Pallet Town",
         team: [],
         badges: [],
-        bag: { pokeball: INITIAL_POKEBALLS, coins: INITIAL_COINS }
+        bag: { ...DEFAULT_BAG }
       };
       return [...p, next];
     });
@@ -458,7 +522,7 @@ function useGameState(socket: Socket | null) {
       location: "Pallet Town",
       team: [],
       badges: [],
-      bag: { pokeball: INITIAL_POKEBALLS, coins: INITIAL_COINS }
+      bag: { ...DEFAULT_BAG }
     }]);
     setCurrentPlayerIndex(0);
     setWildEncounter(null);
@@ -477,6 +541,7 @@ function useGameState(socket: Socket | null) {
             : pl
         )
       );
+      pokedexCaught(playerId, starterId);
     }).catch(() => {});
     setTimeout(() => {
       const all = players.every((p) => p.team.length > 0 || p.id === playerId);
@@ -496,15 +561,27 @@ function useGameState(socket: Socket | null) {
       ps.map((pl) => (pl.id === playerId ? { ...pl, location: to } : pl))
     );
     const loc = LOCATIONS[to];
-    const pool = loc?.wildPool;
-    const canEncounter = pool && pool.length > 0 && (loc.type === "grass" || loc.type === "cave" || loc.type === "water");
-    if (canEncounter && pool) {
+    const pool = loc ? getWildPool(loc) : [];
+    const canEncounter = pool.length > 0 && (loc?.type === "grass" || loc?.type === "cave" || loc?.type === "water");
+    const plAfterMove = players.find((p) => p.id === playerId);
+    const repelActive = normalizeBag(plAfterMove?.bag).repel > 0;
+    if (repelActive && canEncounter) {
+      useItem(playerId, "repel");
+    }
+    if (canEncounter && !repelActive) {
       sound.playSfx("battle-start");
       const pid = pool[Math.floor(Math.random() * pool.length)];
       getPokemonTemplate(pid).then((tpl) => {
         const lvl = getWildLevel(loc);
         const inst = makeInstanceFromTemplate(tpl, lvl);
-        const encounter = { pokemon: inst, location: to, triggeredByPlayerId: playerId };
+        const shiny = Math.random() < SHINY_CHANCE;
+        if (shiny) {
+          (inst as any).isShiny = true;
+          inst.sprite = `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/shiny/${pid}.png`;
+          inst.name = `★ ${inst.name}`;
+        }
+        const encounter = { pokemon: inst as Pokemon, location: to, triggeredByPlayerId: playerId };
+        pokedexSeen(playerId, pid);
         myBattleRef.current = { phase: "battle", wildEncounter: encounter };
         setWildEncounter(encounter);
         setTimeout(() => setPhase("battle"), 50);
@@ -516,13 +593,26 @@ function useGameState(socket: Socket | null) {
     const pl = players.find((p) => p.id === playerId);
     if (!pl) return;
     const loc = LOCATIONS[pl.location];
-    if (!loc || !loc.wildPool || loc.wildPool.length === 0) return;
+    const pool = loc ? getWildPool(loc) : [];
+    if (!loc || pool.length === 0) return;
+    const repelActive = normalizeBag(pl.bag).repel > 0;
+    if (repelActive) {
+      useItem(playerId, "repel");
+      return;
+    }
     sound.playSfx("battle-start");
-    const pid = loc.wildPool[Math.floor(Math.random() * loc.wildPool.length)];
+    const pid = pool[Math.floor(Math.random() * pool.length)];
     getPokemonTemplate(pid).then((tpl) => {
       const lvl = getWildLevel(loc);
       const inst = makeInstanceFromTemplate(tpl, lvl);
-      const encounter = { pokemon: inst, location: pl.location, triggeredByPlayerId: playerId };
+      const shiny = Math.random() < SHINY_CHANCE;
+      if (shiny) {
+        (inst as any).isShiny = true;
+        inst.sprite = `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/shiny/${pid}.png`;
+        inst.name = `★ ${inst.name}`;
+      }
+      const encounter = { pokemon: inst as Pokemon, location: pl.location, triggeredByPlayerId: playerId };
+      pokedexSeen(playerId, pid);
       myBattleRef.current = { phase: "battle", wildEncounter: encounter };
       setWildEncounter(encounter);
       setTimeout(() => setPhase("battle"), 50);
@@ -537,8 +627,8 @@ function useGameState(socket: Socket | null) {
     const pokeballs = pl?.bag?.pokeball ?? 0;
     if (pokeballs < 1) return false;
     // Sempre gasta 1 Poké Bola ao tentar (sucesso ou falha)
-    const coins = pl.bag?.coins ?? INITIAL_COINS;
-    const newBag = { pokeball: Math.max(0, (pl.bag?.pokeball ?? INITIAL_POKEBALLS) - 1), coins };
+    const bag = normalizeBag(pl.bag);
+    const newBag = { ...bag, pokeball: Math.max(0, bag.pokeball - 1) };
     setPlayers((ps) =>
       ps.map((p, i) => (i === idx ? { ...p, bag: newBag } : p))
     );
@@ -546,6 +636,7 @@ function useGameState(socket: Socket | null) {
     if (!ok) return false;
     sound.playSfx("capture");
     const caught = wildEncounter.pokemon;
+    pokedexCaught(pl.id, caught.id);
     setWildEncounter(null);
     setPlayers((ps) =>
       ps.map((p, i) => {
@@ -650,16 +741,38 @@ function useGameState(socket: Socket | null) {
 
   const grantXpToLead = (playerIdx: number, xpGain: number) => grantXpToTeamSlot(playerIdx, 0, xpGain);
 
+  const processNextPendingLevelUp = async () => {
+    const queue = pendingLevelUpsRef.current;
+    if (queue.length === 0) return;
+    const entry = queue.shift()!;
+    const { playerIdx, teamIndex, newLevel, monId, currentMoves } = entry;
+    try {
+      const tpl = await getPokemonTemplate(monId);
+      const newMovesAtLevel = getMovesLearnedAtLevel(tpl.moves as any, newLevel);
+      const toLearn = newMovesAtLevel.filter((m) => !currentMoves.includes(m));
+      if (toLearn.length > 0) {
+        setPendingLearn({ playerIndex: playerIdx, pokemonIndex: teamIndex, newMove: toLearn[0], newLevel, remainingMoves: toLearn.slice(1) });
+        return;
+      }
+    } catch {
+      // ignore template/move errors
+    }
+    processNextPendingLevelUp();
+  };
+
   const grantXpToParticipants = async (playerIdx: number, xpGain: number, participantIds: number[]) => {
     if (!participantIds.length) return;
     const idSet = new Set(participantIds);
     setPlayers((ps) => {
       const pl = ps[playerIdx];
       if (!pl?.team?.length) return ps;
-      const newTeam = pl.team.map((mon, i) => {
-        if (!idSet.has(mon.id)) return mon;
+      const useExpShare = pl.expShare !== false;
+      const levelUps: Array<{ playerIdx: number; teamIndex: number; newLevel: number; monId: number; currentMoves: string[] }> = [];
+      const newTeam = pl.team.map((mon, teamIndex) => {
+        const xpToAdd = idSet.has(mon.id) ? xpGain : (useExpShare ? Math.floor(xpGain * 0.5) : 0);
+        if (xpToAdd <= 0) return mon;
         const oldLevel = mon.level ?? 1;
-        let newXp = (mon.xp ?? 0) + xpGain;
+        let newXp = (mon.xp ?? 0) + xpToAdd;
         let level = oldLevel;
         let xpToNext = mon.xpToNext ?? xpToNextForLevel(level);
         while (newXp >= xpToNext) {
@@ -668,7 +781,10 @@ function useGameState(socket: Socket | null) {
           xpToNext = xpToNextForLevel(level);
         }
         const levelGained = level - oldLevel;
-        if (levelGained > 0) sound.playSfx("level-up");
+        if (levelGained > 0) {
+          sound.playSfx("level-up");
+          levelUps.push({ playerIdx, teamIndex, newLevel: level, monId: mon.id, currentMoves: mon.moves ?? [] });
+        }
         const st = mon.stats ?? { attack: 5, defense: 5, speed: 5 };
         const newMaxHp = (mon.maxHp ?? 10) + levelGained * 2;
         const newStats = {
@@ -683,7 +799,18 @@ function useGameState(socket: Socket | null) {
         const newHp = levelGained > 0 ? newMaxHp : Math.min(mon.hp ?? newMaxHp, newMaxHp);
         return { ...mon, level, xp: newXp, xpToNext, maxHp: newMaxHp, hp: newHp, stats: newStats };
       });
+      pendingLevelUpsRef.current = levelUps;
       return ps.map((p, idx) => (idx === playerIdx ? { ...p, team: newTeam } : p));
+    });
+    setTimeout(() => processNextPendingLevelUp(), 0);
+  };
+
+  const toggleExpShare = (playerIdx?: number) => {
+    const idx = playerIdx ?? (currentPlayerIndex >= 0 && currentPlayerIndex < players.length ? currentPlayerIndex : 0);
+    setPlayers((ps) => {
+      const p = ps[idx];
+      if (!p) return ps;
+      return ps.map((pl, i) => (i === idx ? { ...pl, expShare: !(pl.expShare !== false) } : pl));
     });
   };
 
@@ -884,30 +1011,90 @@ function useGameState(socket: Socket | null) {
     );
   };
 
+  const whiteout = (playerId: string) => {
+    const pl = players.find((p) => p.id === playerId);
+    if (!pl) return;
+    const lastTown = (() => {
+      const loc = LOCATIONS[pl.location];
+      if (loc?.type === "town") return pl.location;
+      const visited = Object.entries(LOCATIONS).filter(([, v]) => v.type === "town");
+      return visited.length > 0 ? visited[0][0] : "Pallet Town";
+    })();
+    setPlayers((ps) =>
+      ps.map((p) => {
+        if (p.id !== playerId) return p;
+        const newTeam = p.team.map((m) => ({ ...m, hp: m.maxHp, isFainted: false }));
+        const bag = normalizeBag(p.bag);
+        const lostCoins = Math.floor(bag.coins / 2);
+        return { ...p, team: newTeam, location: lastTown, bag: { ...bag, coins: bag.coins - lostCoins } };
+      })
+    );
+  };
+
+  const pokedexSeen = (playerId: string, pokemonId: number) => {
+    setPlayers((ps) =>
+      ps.map((p) => {
+        if (p.id !== playerId) return p;
+        const dex = p.pokedex ?? { seen: [], caught: [] };
+        if (dex.seen.includes(pokemonId)) return p;
+        return { ...p, pokedex: { ...dex, seen: [...dex.seen, pokemonId] } };
+      })
+    );
+  };
+
+  const pokedexCaught = (playerId: string, pokemonId: number) => {
+    setPlayers((ps) =>
+      ps.map((p) => {
+        if (p.id !== playerId) return p;
+        const dex = p.pokedex ?? { seen: [], caught: [] };
+        const newSeen = dex.seen.includes(pokemonId) ? dex.seen : [...dex.seen, pokemonId];
+        const newCaught = dex.caught.includes(pokemonId) ? dex.caught : [...dex.caught, pokemonId];
+        return { ...p, pokedex: { seen: newSeen, caught: newCaught } };
+      })
+    );
+  };
+
   const addBadge = (playerId: string, badge: string) => {
     setPlayers((ps) =>
       ps.map((pl) => (pl.id === playerId && !pl.badges.includes(badge) ? { ...pl, badges: [...pl.badges, badge] } : pl))
     );
   };
 
-  const buyPokeball = (playerId: string) => {
-    const pl = players.find((p) => p.id === playerId);
-    const coins = pl?.bag?.coins ?? 0;
-    if (coins < POKEBALL_PRICE) return false;
+  const addCoins = (playerId: string, amount: number) => {
     setPlayers((ps) =>
       ps.map((p) => {
         if (p.id !== playerId) return p;
-        const bag = p.bag ?? { pokeball: INITIAL_POKEBALLS, coins: INITIAL_COINS };
-        return {
-          ...p,
-          bag: {
-            pokeball: bag.pokeball + 1,
-            coins: bag.coins - POKEBALL_PRICE
-          }
-        };
+        const bag = normalizeBag(p.bag);
+        return { ...p, bag: { ...bag, coins: bag.coins + amount } };
+      })
+    );
+  };
+
+  const buyItem = (playerId: string, item: keyof Bag, price: number) => {
+    const pl = players.find((p) => p.id === playerId);
+    const coins = pl?.bag?.coins ?? 0;
+    if (coins < price) return false;
+    setPlayers((ps) =>
+      ps.map((p) => {
+        if (p.id !== playerId) return p;
+        const bag = normalizeBag(p.bag);
+        return { ...p, bag: { ...bag, [item]: (bag[item] as number) + 1, coins: bag.coins - price } };
       })
     );
     return true;
+  };
+
+  const buyPokeball = (playerId: string) => buyItem(playerId, "pokeball", POKEBALL_PRICE);
+
+  const useItem = (playerId: string, item: keyof Bag, amount = 1) => {
+    setPlayers((ps) =>
+      ps.map((p) => {
+        if (p.id !== playerId) return p;
+        const bag = normalizeBag(p.bag);
+        if ((bag[item] as number) < amount) return p;
+        return { ...p, bag: { ...bag, [item]: (bag[item] as number) - amount } };
+      })
+    );
   };
 
   const finalizeLearn = (replaceIndex: number | null) => {
@@ -940,6 +1127,7 @@ function useGameState(socket: Socket | null) {
       setPendingLearn({ playerIndex, pokemonIndex, newMove: remainingMoves[0], newLevel, remainingMoves: remainingMoves.slice(1) });
     } else {
       setPendingLearn(null);
+      setTimeout(() => processNextPendingLevelUp(), 0);
     }
   };
 
@@ -1078,13 +1266,20 @@ function useGameState(socket: Socket | null) {
     updatePlayerLead,
     updateLeadPokemon,
     healPlayer,
+    whiteout,
     addBadge,
+    pokedexSeen,
+    pokedexCaught,
     buyPokeball,
+    buyItem,
+    addCoins,
+    useItem,
     searchWild,
     pendingLearn,
     finalizeLearn,
     grantXpToLead,
     grantXpToParticipants,
+    toggleExpShare,
     evolutionNotice,
     setEvolutionNotice,
     replaceState,
@@ -1120,7 +1315,24 @@ export default function App() {
   const [showLeaveConfirm, setShowLeaveConfirm] = useState(false);
   const [showKantoMap, setShowKantoMap] = useState(false);
   const [muted, setMuted] = useState(() => sound.isMuted());
+  const [themeMuted, setThemeMuted] = useState(() => sound.isThemeMuted());
   const [achievementToast, setAchievementToast] = useState<null | (AchievementData & { id: string })>(null);
+  const [showWhiteout, setShowWhiteout] = useState(false);
+  const [showPokedex, setShowPokedex] = useState(false);
+  const [showHallOfFame, setShowHallOfFame] = useState(false);
+  const [hallOfFame, setHallOfFame] = useState<Array<{ playerName: string; team: { name: string; level: number; sprite: string }[]; date: string }>>(() => {
+    try {
+      const saved = localStorage.getItem("pokemon-kanto-hall-of-fame");
+      return saved ? JSON.parse(saved) : [];
+    } catch { return []; }
+  });
+  const [rivalBattle, setRivalBattle] = useState<null | { trainerName: string; team: any[]; index: number; location: string }>(null);
+  const [defeatedTrainers, setDefeatedTrainers] = useState<Set<string>>(() => {
+    try {
+      const saved = localStorage.getItem("pokemon-kanto-defeated-trainers");
+      return saved ? new Set(JSON.parse(saved)) : new Set();
+    } catch { return new Set(); }
+  });
 
   const handleConfirmLeave = () => {
     if (socket && game.roomCode && game.roomCode !== "SOLO") socket.emit("leaveRoom");
@@ -1157,6 +1369,11 @@ export default function App() {
       setStarters(instances);
     }).catch(() => {});
   }, []);
+
+  useEffect(() => {
+    if (game.phase === "home") sound.stopMusic();
+    else if (!sound.isThemeMuted()) sound.startThemeMusic();
+  }, [game.phase]);
 
   useEffect(() => {
     if (!socket) return;
@@ -1271,6 +1488,14 @@ export default function App() {
               if (loc?.type === "town") {
                 setTimeout(() => setCityModal({ name: to, description: `${to} — a place of adventure.`, gym: loc.gym ?? null, league: loc.league ?? false }), 150);
               }
+              const routeTrainer = ROUTE_TRAINERS[to];
+              if (routeTrainer && !defeatedTrainers.has(to) && !game.wildEncounter) {
+                setTimeout(() => {
+                  Promise.all(routeTrainer.team.map((m) => getPokemonTemplate(m.id).then((tpl) => makeInstanceFromTemplate(tpl, m.level)))).then((instances) => {
+                    setRivalBattle({ trainerName: routeTrainer.name, team: instances, index: 0, location: to });
+                  });
+                }, 200);
+              }
             }}
             onStayHere={(locationName) => {
               const loc = LOCATIONS[locationName];
@@ -1297,8 +1522,8 @@ export default function App() {
             league={cityModal.league}
             badgeCount={currentPlayer?.badges?.length ?? 0}
             coins={currentPlayer?.bag?.coins ?? 0}
-            pokeballCount={currentPlayer?.bag?.pokeball ?? 0}
-            onBuyPokeball={() => game.buyPokeball(currentPlayer?.id ?? "")}
+            bag={currentPlayer?.bag as any}
+            onBuyItem={(item, price) => game.buyItem(currentPlayer?.id ?? "", item as any, price)}
             onClose={() => setCityModal(null)}
             onHeal={() => game.healPlayer(currentPlayer?.id ?? "")}
             onChallenge={() => {
@@ -1307,13 +1532,13 @@ export default function App() {
               if (leaderKey === "Giovanni" && badgeCount < 7) return;
               const leaders: Record<string, { name: string; team: { id: number; level: number }[] }> = {
                 "Brock": { name: "Brock", team: [{ id: 74, level: 12 }, { id: 95, level: 14 }] },
-                "Misty": { name: "Misty", team: [{ id: 60, level: 18 }, { id: 121, level: 21 }] },
-                "Lt. Surge": { name: "Lt. Surge", team: [{ id: 25, level: 20 }, { id: 26, level: 22 }] },
-                "Erika": { name: "Erika", team: [{ id: 43, level: 29 }, { id: 45, level: 32 }] },
-                "Koga": { name: "Koga", team: [{ id: 109, level: 38 }, { id: 110, level: 40 }] },
-                "Sabrina": { name: "Sabrina", team: [{ id: 64, level: 48 }, { id: 65, level: 50 }] },
-                "Blaine": { name: "Blaine", team: [{ id: 58, level: 52 }, { id: 59, level: 54 }] },
-                "Giovanni": { name: "Giovanni", team: [{ id: 111, level: 56 }, { id: 112, level: 60 }] }
+                "Misty": { name: "Misty", team: [{ id: 120, level: 18 }, { id: 121, level: 21 }] },
+                "Lt. Surge": { name: "Lt. Surge", team: [{ id: 100, level: 21 }, { id: 25, level: 18 }, { id: 26, level: 24 }] },
+                "Erika": { name: "Erika", team: [{ id: 114, level: 29 }, { id: 71, level: 29 }, { id: 45, level: 32 }] },
+                "Koga": { name: "Koga", team: [{ id: 109, level: 37 }, { id: 89, level: 39 }, { id: 109, level: 37 }, { id: 110, level: 43 }] },
+                "Sabrina": { name: "Sabrina", team: [{ id: 64, level: 38 }, { id: 122, level: 37 }, { id: 49, level: 38 }, { id: 65, level: 43 }] },
+                "Blaine": { name: "Blaine", team: [{ id: 58, level: 42 }, { id: 77, level: 40 }, { id: 78, level: 42 }, { id: 59, level: 47 }] },
+                "Giovanni": { name: "Giovanni", team: [{ id: 111, level: 45 }, { id: 51, level: 42 }, { id: 31, level: 44 }, { id: 34, level: 45 }, { id: 112, level: 50 }] }
               };
               const leader = leaders[leaderKey || ""] || leaders["Brock"];
               Promise.all(leader.team.map((m) => getPokemonTemplate(m.id).then((tpl) => makeInstanceFromTemplate(tpl, m.level)))).then((instances) => {
@@ -1332,11 +1557,53 @@ export default function App() {
           />
         )}
 
+        {rivalBattle && currentPlayer && currentPlayer.team[0] && rivalBattle.team[rivalBattle.index] && (
+          <BattleModal
+            key={`rival-${rivalBattle.trainerName}-${rivalBattle.index}`}
+            isTrainerBattle
+            playerPokemon={currentPlayer.team[0]}
+            enemyPokemon={rivalBattle.team[rivalBattle.index]}
+            playerTeam={currentPlayer.team}
+            locationType={(LOCATIONS[rivalBattle.location] as any)?.type ?? "grass"}
+            onSwitchPokemon={(i) => game.updatePlayerLead(currentPlayer!.id, i)}
+            onPlayerUpdate={(p) => { if (currentPlayer) game.updateLeadPokemon(currentPlayer.id, p); }}
+            potionCount={normalizeBag(currentPlayer.bag).potion}
+            superPotionCount={normalizeBag(currentPlayer.bag).superpotion}
+            onUsePotion={(type) => game.useItem(currentPlayer!.id, type)}
+            onEnd={async (res) => {
+              if (res.winner === "player") {
+                if (res.xpGain != null && res.xpGain > 0) {
+                  const ids = res.participantIds?.length ? res.participantIds : (currentPlayer.team[0] ? [currentPlayer.team[0].id] : []);
+                  if (ids.length) await game.grantXpToParticipants(effectivePlayerIndex, res.xpGain, ids);
+                }
+                if (rivalBattle.index + 1 < rivalBattle.team.length) {
+                  setRivalBattle((prev) => prev ? { ...prev, index: prev.index + 1 } : null);
+                } else {
+                  game.addCoins(currentPlayer!.id, 5);
+                  setDefeatedTrainers((prev) => {
+                    const next = new Set(prev);
+                    next.add(rivalBattle.location);
+                    try { localStorage.setItem("pokemon-kanto-defeated-trainers", JSON.stringify([...next])); } catch {}
+                    return next;
+                  });
+                  setRivalBattle(null);
+                }
+              } else {
+                setRivalBattle(null);
+                if (currentPlayer.team.every((m) => (m.hp ?? 0) <= 0)) {
+                  game.whiteout(currentPlayer.id);
+                  setShowWhiteout(true);
+                }
+              }
+              sound.stopSfx("battle-start");
+            }}
+          />
+        )}
         {gymVictory && (
           <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4">
             <div className="bg-gray-900 p-4 rounded-lg text-white max-w-sm text-center shadow-xl">
               <div className="font-bold text-yellow-300 mb-2 text-sm sm:text-base">Gym victory!</div>
-              <p className="text-xs sm:text-sm mb-4">You defeated {gymVictory} and earned the badge.</p>
+              <p className="text-xs sm:text-sm mb-4">You defeated {gymVictory} and earned the badge. (+{GYM_COIN_REWARD} coins)</p>
               <button className="pixel-btn w-full" onClick={() => setGymVictory(null)}>Close</button>
             </div>
           </div>
@@ -1356,16 +1623,25 @@ export default function App() {
             playerPokemon={currentPlayer.team[0]}
             enemyPokemon={game.wildEncounter.pokemon}
             playerTeam={currentPlayer.team}
-            pokeballCount={currentPlayer.bag?.pokeball ?? 0}
+            pokeballCount={(currentPlayer.bag?.pokeball ?? 0) + (currentPlayer.bag?.greatball ?? 0) + (currentPlayer.bag?.ultraball ?? 0)}
+            potionCount={normalizeBag(currentPlayer.bag).potion}
+            superPotionCount={normalizeBag(currentPlayer.bag).superpotion}
+            onUsePotion={(type) => game.useItem(currentPlayer!.id, type)}
+            locationType={(LOCATIONS[currentPlayer.location] as any)?.type ?? "grass"}
             onSwitchPokemon={(i) => game.updatePlayerLead(currentPlayer!.id, i)}
             onEnd={async (res) => {
               if (res.winner === "player" && res.xpGain != null && res.xpGain > 0) {
                 const ids = res.participantIds?.length ? res.participantIds : (currentPlayer?.team[0] ? [currentPlayer.team[0].id] : []);
                 if (ids.length) await game.grantXpToParticipants(effectivePlayerIndex, res.xpGain, ids);
+                game.addCoins(currentPlayer!.id, WILD_COIN_REWARD);
               }
               sound.stopSfx("battle-start");
               game.setPhase("map");
               game.setWildEncounter(null);
+              if (res.winner === "enemy" && currentPlayer && currentPlayer.team.every((m) => (m.hp ?? 0) <= 0)) {
+                game.whiteout(currentPlayer.id);
+                setShowWhiteout(true);
+              }
             }}
             onPlayerUpdate={(p) => {
               if (currentPlayer) game.updateLeadPokemon(currentPlayer.id, p);
@@ -1387,6 +1663,7 @@ export default function App() {
             playerPokemon={currentPlayer.team[0]}
             enemyPokemon={gymBattle.team[gymBattle.index]}
             playerTeam={currentPlayer.team}
+            locationType="town"
             onSwitchPokemon={(i) => game.updatePlayerLead(currentPlayer!.id, i)}
             onPlayerUpdate={(p) => { if (currentPlayer) game.updateLeadPokemon(currentPlayer.id, p); }}
             onEnd={async (res) => {
@@ -1399,6 +1676,7 @@ export default function App() {
                   setGymBattle((prev) => prev ? { ...prev, index: prev.index + 1 } : null);
                 } else {
                   game.addBadge(currentPlayer!.id, gymBattle.leader);
+                  game.addCoins(currentPlayer!.id, GYM_COIN_REWARD);
                   setGymVictory(gymBattle.leader);
                   setGymBattle(null);
                   const achievementPayload = { type: "gym" as const, playerName: currentPlayer!.name, gymLeader: gymBattle.leader };
@@ -1410,6 +1688,10 @@ export default function App() {
                 }
               } else {
                 setGymBattle(null);
+                if (currentPlayer && currentPlayer.team.every((m) => (m.hp ?? 0) <= 0)) {
+                  game.whiteout(currentPlayer.id);
+                  setShowWhiteout(true);
+                }
               }
               sound.stopSfx("battle-start");
             }}
@@ -1427,6 +1709,7 @@ export default function App() {
               playerPokemon={currentPlayer.team[0]}
               enemyPokemon={enemy}
               playerTeam={currentPlayer.team}
+              locationType="town"
               onSwitchPokemon={(i) => game.updatePlayerLead(currentPlayer!.id, i)}
               onPlayerUpdate={(p) => { if (currentPlayer) game.updateLeadPokemon(currentPlayer.id, p); }}
               onEnd={async (res) => {
@@ -1443,6 +1726,17 @@ export default function App() {
                     setLeagueBattle((prev) => prev ? { ...prev, trainerIndex: prev.trainerIndex + 1, pokemonIndex: 0 } : null);
                   } else {
                     sound.playSfx("gym-victory");
+                    game.addCoins(currentPlayer!.id, LEAGUE_COIN_REWARD);
+                    const hofEntry = {
+                      playerName: currentPlayer!.name,
+                      team: currentPlayer!.team.map((m) => ({ name: m.name, level: m.level, sprite: m.sprite })),
+                      date: new Date().toLocaleDateString(),
+                    };
+                    setHallOfFame((prev) => {
+                      const next = [...prev, hofEntry];
+                      try { localStorage.setItem("pokemon-kanto-hall-of-fame", JSON.stringify(next)); } catch {}
+                      return next;
+                    });
                     setLeagueVictory(true);
                     setLeagueBattle(null);
                     if (socket && game.roomCode && game.roomCode !== "SOLO") {
@@ -1453,6 +1747,10 @@ export default function App() {
                   }
                 } else {
                   setLeagueBattle(null);
+                  if (currentPlayer && currentPlayer.team.every((m) => (m.hp ?? 0) <= 0)) {
+                    game.whiteout(currentPlayer.id);
+                    setShowWhiteout(true);
+                  }
                 }
                 sound.stopSfx("battle-start");
               }}
@@ -1463,8 +1761,22 @@ export default function App() {
           <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 p-4">
             <div className="bg-gray-900 p-6 rounded-lg text-white max-w-sm text-center shadow-xl border-2 border-amber-500/60">
               <div className="font-bold text-yellow-300 mb-2 text-lg">🏆 You are the Champion!</div>
-              <p className="text-sm mb-4">You defeated the Elite Four and the Champion. The Pokémon League is yours!</p>
-              <button className="pixel-btn w-full" onClick={() => setLeagueVictory(false)}>Close</button>
+              <p className="text-sm mb-2">You defeated the Elite Four and the Champion. The Pokémon League is yours!</p>
+              <p className="text-xs text-gray-400 mb-4">Your team has been registered in the Hall of Fame.</p>
+              <div className="flex gap-2">
+                <button className="pixel-btn flex-1" onClick={() => setLeagueVictory(false)}>Close</button>
+                <button className="pixel-btn pixel-btn-primary flex-1" onClick={() => { setLeagueVictory(false); setShowHallOfFame(true); }}>Hall of Fame</button>
+              </div>
+            </div>
+          </div>
+        )}
+        {showWhiteout && (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 p-4">
+            <div className="bg-gray-900 p-5 rounded-lg text-white max-w-xs text-center shadow-xl border-2 border-red-500/50">
+              <div className="font-bold text-red-400 mb-2 text-sm sm:text-base">You blacked out!</div>
+              <p className="text-xs sm:text-sm text-gray-300 mb-1">All your Pokémon fainted.</p>
+              <p className="text-xs sm:text-sm text-gray-300 mb-4">You lost half your coins and rushed to the nearest city.</p>
+              <button className="pixel-btn w-full" onClick={() => setShowWhiteout(false)}>OK</button>
             </div>
           </div>
         )}
@@ -1487,6 +1799,7 @@ export default function App() {
               playerPokemon={{ ...myLead, hp: myHp, maxHp: myMaxHp }}
               enemyPokemon={{ ...theirLead, hp: theirHp, maxHp: theirMaxHp }}
               playerTeam={currentPlayer.team}
+              locationType={(LOCATIONS[currentPlayer.location] as any)?.type ?? "town"}
               pvpBattleState={pvp.status ? { log: pvp.log ?? [], status: pvp.status, winner: pvp.winner, myMoveSubmitted: amChallenger ? pvp.challengerMove != null : pvp.defenderMove != null } : undefined}
               pvpYouWon={pvp.winner != null && (pvp.winner === "challenger") === amChallenger}
               onPvpSubmitMove={(moveName) => socket?.emit("pvpSubmitMove", moveName)}
@@ -1530,29 +1843,52 @@ export default function App() {
           const meId = socket!.id;
           const myIndex = meId === trade!.playerAId ? "a" : "b";
           const mySelection = myIndex === "a" ? trade!.aSelectedIndex : trade!.bSelectedIndex;
+          const theirSelection = myIndex === "a" ? trade!.bSelectedIndex : trade!.aSelectedIndex;
           const myTeam = game.players.find((p) => p.id === meId)?.team ?? [];
+          const theirId = myIndex === "a" ? trade!.playerBId : trade!.playerAId;
+          const theirPlayer = game.players.find((p) => p.id === theirId);
+          const theirTeam = theirPlayer?.team ?? [];
+          const theirMon = theirSelection != null ? theirTeam[theirSelection] : null;
           const canConfirm = trade!.aSelectedIndex != null && trade!.bSelectedIndex != null;
           return (
             <div className="fixed inset-0 z-[55] flex items-center justify-center bg-black/60 p-4">
-              <div className="bg-gray-900 rounded-lg p-4 max-w-sm w-full text-white shadow-xl max-h-[90vh] overflow-y-auto">
+              <div className="bg-gray-900 rounded-lg p-4 max-w-sm w-full text-white shadow-xl max-h-[90vh] overflow-y-auto border-2 border-amber-500/30">
                 <h3 className="text-base font-bold text-yellow-300 mb-3">Trade Pokémon</h3>
-                <p className="text-muted mb-2">Choose one Pokémon to offer:</p>
-                <div className="space-y-2 mb-4">
+                <p className="text-xs text-gray-400 mb-2">Choose one of your Pokémon to offer:</p>
+                <div className="space-y-1.5 mb-4">
                   {myTeam.map((pk, i) => (
                     <button
                       key={i}
-                      className={`w-full flex items-center gap-2 p-2 rounded bg-gray-700 text-left ${mySelection === i ? "ring-2 ring-yellow-400" : ""}`}
+                      className={`w-full flex items-center gap-2 p-2 rounded bg-gray-700 hover:bg-gray-600 text-left transition ${mySelection === i ? "ring-2 ring-yellow-400 bg-amber-900/30" : ""}`}
                       onClick={() => game.setTradeSelection(meId, mySelection === i ? null : i)}
                     >
                       <img src={pk.sprite} className="w-10 h-10" alt={pk.name} />
-                      <span className="text-sm">{pk.name} Lv{pk.level}</span>
+                      <div className="min-w-0 flex-1">
+                        <div className="text-sm font-bold truncate">{pk.name}</div>
+                        <div className="text-[10px] text-gray-400">Lv{pk.level} · HP {pk.hp}/{pk.maxHp}</div>
+                      </div>
+                      {mySelection === i && <span className="text-yellow-400 text-xs font-bold">Offering</span>}
                     </button>
                   ))}
                 </div>
+                <div className="border-t border-gray-600/50 pt-3 mb-3">
+                  <p className="text-xs text-gray-400 mb-2">{theirPlayer?.name ?? "Other player"} offers:</p>
+                  {theirMon ? (
+                    <div className="flex items-center gap-2 p-2 rounded bg-gray-700">
+                      <img src={theirMon.sprite} className="w-10 h-10" alt={theirMon.name} />
+                      <div>
+                        <div className="text-sm font-bold">{theirMon.name}</div>
+                        <div className="text-[10px] text-gray-400">Lv{theirMon.level}</div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="text-xs text-gray-500 italic p-2">Waiting for selection...</div>
+                  )}
+                </div>
                 <div className="flex gap-2">
                   <button className="pixel-btn flex-1" onClick={() => game.cancelTrade()}>Cancel</button>
-                  <button className="pixel-btn flex-1" disabled={!canConfirm} onClick={() => game.executeTrade()}>
-                    {canConfirm ? "Confirm trade" : "Waiting for other..."}
+                  <button className="pixel-btn pixel-btn-primary flex-1" disabled={!canConfirm} onClick={() => game.executeTrade()}>
+                    {canConfirm ? "Confirm trade" : "Waiting..."}
                   </button>
                 </div>
               </div>
@@ -1601,6 +1937,42 @@ export default function App() {
                   {muted ? "Off" : "On"}
                 </button>
               </label>
+              <label className="flex items-center justify-between gap-2 cursor-pointer mt-2">
+                <span className="text-xs sm:text-sm text-gray-300">Theme music</span>
+                <button
+                  type="button"
+                  className={`pixel-btn text-xs min-w-[70px] ${themeMuted ? "opacity-70" : "pixel-btn-primary"}`}
+                  onClick={() => {
+                    sound.toggleThemeMuted();
+                    setThemeMuted(sound.isThemeMuted());
+                    if (!sound.isThemeMuted() && game.phase !== "home") sound.startThemeMusic();
+                  }}
+                >
+                  {themeMuted ? "Off" : "On"}
+                </button>
+              </label>
+              {currentPlayer && (
+                <label className="flex items-center justify-between gap-2 cursor-pointer mt-2">
+                  <span className="text-xs sm:text-sm text-gray-300">Exp Share</span>
+                  <button
+                    type="button"
+                    className={`pixel-btn text-xs min-w-[70px] ${currentPlayer.expShare === false ? "opacity-70" : "pixel-btn-primary"}`}
+                    onClick={() => game.toggleExpShare(effectivePlayerIndex)}
+                  >
+                    {currentPlayer.expShare !== false ? "On" : "Off"}
+                  </button>
+                </label>
+              )}
+              {currentPlayer && (
+                <button type="button" className="pixel-btn text-xs mt-2 w-full" onClick={() => { setShowPokedex(true); setShowMenu(false); }}>
+                  📖 Pokédex ({currentPlayer.pokedex?.caught?.length ?? 0}/151)
+                </button>
+              )}
+              {hallOfFame.length > 0 && (
+                <button type="button" className="pixel-btn text-xs mt-2 w-full" onClick={() => { setShowHallOfFame(true); setShowMenu(false); }}>
+                  🏆 Hall of Fame ({hallOfFame.length})
+                </button>
+              )}
               {!muted && (
                 <button type="button" className="pixel-btn text-xs mt-2 w-full" onClick={() => sound.playSfx("battle-start")}>
                   Test sound (battle-start.mp3)
@@ -1618,6 +1990,59 @@ export default function App() {
                 </div>
               )}
               <p className="text-[10px] text-gray-500 mt-3">Put your .mp3 in <code className="bg-gray-800 px-1 rounded">public/sounds/</code>: battle-start, capture, level-up, evolution, achievement, gym-victory</p>
+            </div>
+          </div>
+        )}
+        {showHallOfFame && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center modal-backdrop p-2 sm:p-4 overflow-y-auto">
+            <div className="card-panel p-4 w-full max-w-md border-2 border-amber-500/40 max-h-[90vh] flex flex-col">
+              <div className="flex items-center justify-between mb-3 flex-shrink-0">
+                <span className="font-bold text-sm text-yellow-300">🏆 Hall of Fame</span>
+                <button type="button" className="pixel-btn text-xs" onClick={() => setShowHallOfFame(false)}>Close</button>
+              </div>
+              <div className="overflow-y-auto flex-1 min-h-0 space-y-3">
+                {hallOfFame.map((entry, i) => (
+                  <div key={i} className="bg-black/30 rounded-lg p-3 border border-amber-600/30">
+                    <div className="text-xs text-amber-300 font-bold mb-1">{entry.playerName} — {entry.date}</div>
+                    <div className="flex gap-2 flex-wrap">
+                      {entry.team.map((mon, j) => (
+                        <div key={j} className="flex flex-col items-center">
+                          <img src={mon.sprite} alt={mon.name} className="w-10 h-10" loading="lazy" />
+                          <span className="text-[8px] text-gray-400">{mon.name} Lv{mon.level}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+                {hallOfFame.length === 0 && <p className="text-xs text-gray-500 text-center">No champions yet.</p>}
+              </div>
+            </div>
+          </div>
+        )}
+        {showPokedex && currentPlayer && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center modal-backdrop p-2 sm:p-4 overflow-y-auto">
+            <div className="card-panel p-4 w-full max-w-lg border-2 border-amber-500/40 max-h-[90vh] flex flex-col">
+              <div className="flex items-center justify-between mb-3 flex-shrink-0">
+                <span className="font-bold text-sm text-amber-300">📖 Pokédex — {currentPlayer.pokedex?.caught?.length ?? 0} caught / {currentPlayer.pokedex?.seen?.length ?? 0} seen</span>
+                <button type="button" className="pixel-btn text-xs" onClick={() => setShowPokedex(false)}>Close</button>
+              </div>
+              <div className="grid grid-cols-6 sm:grid-cols-9 gap-1 overflow-y-auto flex-1 min-h-0">
+                {Array.from({ length: 151 }, (_, i) => i + 1).map((id) => {
+                  const dex = currentPlayer!.pokedex ?? { seen: [], caught: [] };
+                  const caught = dex.caught.includes(id);
+                  const seen = dex.seen.includes(id);
+                  return (
+                    <div key={id} className={`relative w-full aspect-square rounded flex items-center justify-center ${caught ? "bg-green-900/40 border border-green-600/40" : seen ? "bg-gray-700/60 border border-gray-500/30" : "bg-gray-900/60 border border-gray-800/30"}`} title={caught || seen ? `#${id}` : "???"}>
+                      {(caught || seen) ? (
+                        <img src={`https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/${id}.png`} alt={`#${id}`} className={`w-full h-full object-contain ${seen && !caught ? "opacity-30 grayscale" : ""}`} loading="lazy" />
+                      ) : (
+                        <span className="text-[8px] text-gray-600">{id}</span>
+                      )}
+                      {caught && <span className="absolute bottom-0 right-0 text-[6px] text-green-400">✓</span>}
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           </div>
         )}
@@ -1661,6 +2086,7 @@ export default function App() {
         <KantoMapView
           locations={LOCATIONS as Record<string, { type: "town" | "grass" | "water" | "cave"; connections: string[]; x: number; y: number; gym?: string | null }>}
           currentLocation={currentPlayer.location}
+          otherPlayers={game.players.filter((p) => p.id !== currentPlayer!.id && p.location).map((p) => ({ name: p.name, color: p.color, location: p.location }))}
           onClose={() => setShowKantoMap(false)}
         />
       )}

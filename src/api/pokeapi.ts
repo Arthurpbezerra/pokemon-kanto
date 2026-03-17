@@ -23,8 +23,30 @@ type PokemonTemplate = {
 };
 
 const API_BASE = "https://pokeapi.co/api/v2";
-const cache = new Map<number, PokemonTemplate>();
-const moveCache = new Map<string, { name: string; power: number | null; accuracy: number | null; damage_class: string | null; type: string }>();
+const LS_TPL_KEY = "pokemon-kanto-tpl-cache";
+const LS_MOVE_KEY = "pokemon-kanto-move-cache";
+
+function loadLsCache<T>(key: string): Map<string | number, T> {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return new Map();
+    const obj = JSON.parse(raw) as Record<string, T>;
+    return new Map(Object.entries(obj).map(([k, v]) => [isNaN(Number(k)) ? k : Number(k), v]));
+  } catch {
+    return new Map();
+  }
+}
+
+function saveLsCache(key: string, map: Map<any, any>) {
+  try {
+    const obj: Record<string, any> = {};
+    for (const [k, v] of map) obj[String(k)] = v;
+    localStorage.setItem(key, JSON.stringify(obj));
+  } catch {}
+}
+
+const cache: Map<number, PokemonTemplate> = loadLsCache<PokemonTemplate>(LS_TPL_KEY) as Map<number, PokemonTemplate>;
+const moveCache: Map<string, { name: string; power: number | null; accuracy: number | null; damage_class: string | null; type: string; pp?: number }> = loadLsCache(LS_MOVE_KEY) as any;
 
 async function fetchRawPokemon(id: number): Promise<RawPokemon> {
   const res = await fetch(`${API_BASE}/pokemon/${id}`);
@@ -60,12 +82,13 @@ export async function getPokemonTemplate(id: number): Promise<PokemonTemplate> {
     }))
   };
   cache.set(id, tpl);
+  saveLsCache(LS_TPL_KEY, cache);
   return tpl;
 }
 
-// Simple XP: XP needed to reach next level; XP granted per defeated enemy level
-export const xpToNextForLevel = (level: number) => 40 * level;
-export const xpForDefeatingEnemy = (enemyLevel: number) => 12 * enemyLevel;
+// XP curve: less XP needed per level, more XP per battle — level up in ~1–2 battles
+export const xpToNextForLevel = (level: number) => 25 * level;
+export const xpForDefeatingEnemy = (enemyLevel: number) => 18 * enemyLevel;
 
 export function makeInstanceFromTemplate(tpl: PokemonTemplate, level = 5) {
   // Stats scale with level from base stats (no IV/EV). Simple formulas:
@@ -171,10 +194,12 @@ export async function getMoveData(name: string) {
     accuracy: raw.accuracy ?? null,
     damage_class: raw.damage_class?.name ?? null,
     type: (raw.type?.name ?? "normal").toLowerCase(),
+    pp: raw.pp ?? 35,
     stat_changes: (raw.stat_changes || []).map((s: any) => ({ stat: s.stat?.name, change: s.change })),
     effect_entries: raw.effect_entries || []
   };
   moveCache.set(name, entry);
+  saveLsCache(LS_MOVE_KEY, moveCache);
   return entry;
 }
 

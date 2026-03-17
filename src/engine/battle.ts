@@ -70,7 +70,8 @@ export function calculateDamage(
   return { damage: dmg, isCrit: crit };
 }
 
-/** Same as calculateDamage but accepts moveType and defenderTypes to compute type effectiveness. */
+/** Same as calculateDamage but accepts moveType and defenderTypes to compute type effectiveness.
+ *  Pass attackerTypes to apply STAB (1.5x when move type matches one of the attacker's types). */
 export function calculateDamageWithTypes(
   attacker: SimpleStats,
   defender: SimpleStats,
@@ -78,10 +79,13 @@ export function calculateDamageWithTypes(
   damageClass: "physical" | "special" | string,
   attackerLevel: number,
   moveType: string,
-  defenderTypes: string[]
+  defenderTypes: string[],
+  attackerTypes?: string[]
 ) {
   const { multiplier, effectiveness } = getTypeEffectiveness(moveType, defenderTypes);
-  const { damage, isCrit } = calculateDamage(attacker, defender, power, damageClass, attackerLevel, multiplier);
+  const norm = (t: string) => (t || "normal").toLowerCase();
+  const stab = attackerTypes?.some((t) => norm(t) === norm(moveType)) ? 1.5 : 1;
+  const { damage, isCrit } = calculateDamage(attacker, defender, power, damageClass, attackerLevel, multiplier * stab);
   return { damage, isCrit, effectiveness };
 }
 
