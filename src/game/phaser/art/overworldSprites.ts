@@ -11,14 +11,27 @@ export const OW_SHEETS = {
   mom: { key: "ow-mom", url: publicUrl("assets/pokefirered/overworld/mom.png") },
   daisy: { key: "ow-daisy", url: publicUrl("assets/pokefirered/overworld/daisy.png") },
   blue: { key: "ow-blue", url: publicUrl("assets/pokefirered/overworld/blue.png") },
+  fisher: { key: "ow-fisher", url: publicUrl("assets/pokefirered/overworld/fisher.png") },
 } as const;
+
+const SPRITE_ID_TO_SHEET: Record<string, string> = {
+  red: OW_SHEETS.red.key,
+  leaf: OW_SHEETS.leaf.key,
+  oak: OW_SHEETS.oak.key,
+  blue: OW_SHEETS.blue.key,
+  fisher: OW_SHEETS.fisher.key,
+  fat_man: OW_SHEETS.fatMan.key,
+  mom: OW_SHEETS.mom.key,
+  daisy: OW_SHEETS.daisy.key,
+  woman: OW_SHEETS.woman.key,
+};
+
+export function playerSheetKey(spriteId?: string) {
+  return SPRITE_ID_TO_SHEET[spriteId ?? "red"] ?? OW_SHEETS.red.key;
+}
 
 const FRAME_W = 16;
 const FRAME_H = 32;
-
-export function playerSheetKey(spriteId?: string) {
-  return spriteId === "leaf" ? OW_SHEETS.leaf.key : OW_SHEETS.red.key;
-}
 
 export function queueOverworldSheets(scene: Phaser.Scene) {
   for (const sheet of Object.values(OW_SHEETS)) {

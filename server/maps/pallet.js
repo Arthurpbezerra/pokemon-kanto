@@ -13,8 +13,8 @@ export const PALLET_MAPS = {
     spawn: { x: 6, y: 8 },
     collisionRows: collision.pallet_town.rows,
     warps: [
-      { x: 6, y: 7, w: 1, h: 1, toMapId: "pallet_player_house_1f", toX: 5, toY: 8 },
-      { x: 15, y: 7, w: 1, h: 1, toMapId: "pallet_rival_house_1f", toX: 5, toY: 8 },
+      { x: 6, y: 7, w: 1, h: 1, toMapId: "pallet_player_house_1f", toX: 4, toY: 8 },
+      { x: 15, y: 7, w: 1, h: 1, toMapId: "pallet_rival_house_1f", toX: 4, toY: 8 },
       { x: 16, y: 13, w: 1, h: 1, toMapId: "pallet_oak_lab", toX: 6, toY: 12 },
     ],
   },
@@ -22,7 +22,7 @@ export const PALLET_MAPS = {
     id: "pallet_player_house_1f",
     widthTiles: 13,
     heightTiles: 10,
-    spawn: { x: 5, y: 8 },
+    spawn: { x: 4, y: 8 },
     collisionRows: collision.pallet_player_house_1f.rows,
     warps: [
       { x: 4, y: 8, w: 2, h: 1, toMapId: "pallet_town", toX: 6, toY: 8 },
@@ -41,7 +41,7 @@ export const PALLET_MAPS = {
     id: "pallet_rival_house_1f",
     widthTiles: 13,
     heightTiles: 10,
-    spawn: { x: 5, y: 8 },
+    spawn: { x: 4, y: 8 },
     collisionRows: collision.pallet_rival_house_1f.rows,
     warps: [{ x: 3, y: 8, w: 3, h: 1, toMapId: "pallet_town", toX: 15, toY: 8 }],
   },

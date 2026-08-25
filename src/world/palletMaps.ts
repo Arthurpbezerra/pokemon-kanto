@@ -49,8 +49,8 @@ export const PALLET_MAPS: Record<string, OverworldMapDef> = {
     collisionRows: collisionFor("pallet_town").rows,
     encounterZones: [],
     warps: [
-      { x: 6, y: 7, w: 1, h: 1, toMapId: "pallet_player_house_1f", toX: 5, toY: 8, toLocation: "Pallet Town" },
-      { x: 15, y: 7, w: 1, h: 1, toMapId: "pallet_rival_house_1f", toX: 5, toY: 8, toLocation: "Pallet Town" },
+      { x: 6, y: 7, w: 1, h: 1, toMapId: "pallet_player_house_1f", toX: 4, toY: 8, toLocation: "Pallet Town" },
+      { x: 15, y: 7, w: 1, h: 1, toMapId: "pallet_rival_house_1f", toX: 4, toY: 8, toLocation: "Pallet Town" },
       { x: 16, y: 13, w: 1, h: 1, toMapId: "pallet_oak_lab", toX: 6, toY: 12, toLocation: "Pallet Town" },
     ],
     triggers: [],
@@ -62,7 +62,7 @@ export const PALLET_MAPS: Record<string, OverworldMapDef> = {
     widthTiles: 13,
     heightTiles: 10,
     tileSize: TILE_SIZE,
-    spawn: { x: 5, y: 8 },
+    spawn: { x: 4, y: 8 },
     blockedRects: [],
     collisionRows: collisionFor("pallet_player_house_1f").rows,
     encounterZones: [],
@@ -93,7 +93,7 @@ export const PALLET_MAPS: Record<string, OverworldMapDef> = {
     widthTiles: 13,
     heightTiles: 10,
     tileSize: TILE_SIZE,
-    spawn: { x: 5, y: 8 },
+    spawn: { x: 4, y: 8 },
     blockedRects: [],
     collisionRows: collisionFor("pallet_rival_house_1f").rows,
     encounterZones: [],
@@ -189,6 +189,38 @@ export const PLAYER_SPRITE_PRESETS = [
     frameRows: 1,
     renderScale: 1,
   },
+  {
+    id: "oak",
+    label: "Prof. Oak",
+    sheetUrl: publicUrl("assets/pokefirered/overworld/prof_oak.png"),
+    frameCols: 9,
+    frameRows: 1,
+    renderScale: 1,
+  },
+  {
+    id: "blue",
+    label: "Gary",
+    sheetUrl: publicUrl("assets/pokefirered/overworld/blue.png"),
+    frameCols: 9,
+    frameRows: 1,
+    renderScale: 1,
+  },
+  {
+    id: "fisher",
+    label: "Fisherman",
+    sheetUrl: publicUrl("assets/pokefirered/overworld/fisher.png"),
+    frameCols: 9,
+    frameRows: 1,
+    renderScale: 1,
+  },
+  {
+    id: "fat_man",
+    label: "Townsfolk",
+    sheetUrl: publicUrl("assets/pokefirered/overworld/fat_man.png"),
+    frameCols: 9,
+    frameRows: 1,
+    renderScale: 1,
+  },
 ];
 
 export function canonicalMapId(mapId?: string | null): string {
@@ -246,6 +278,30 @@ export function npcsOnMap(mapId: string): MapNpc[] {
 
 export function npcAt(mapId: string, x: number, y: number): MapNpc | null {
   return PALLET_NPCS.find((n) => n.mapId === mapId && n.x === x && n.y === y) ?? null;
+}
+
+/** Find an NPC to talk to: tile in front, then any adjacent NPC (FireRed-style lenient A). */
+export function findNpcForInteract(
+  mapId: string,
+  pos: TilePosition,
+  facing: Direction
+): MapNpc | null {
+  const front = facingTile(pos, facing);
+  const inFront = npcAt(mapId, front.x, front.y);
+  if (inFront) return inFront;
+
+  const adjacent = npcsOnMap(mapId).filter((npc) => manhattan(pos, npc) === 1);
+  const facingMatch = adjacent.find((npc) => {
+    const dx = npc.x - pos.x;
+    const dy = npc.y - pos.y;
+    if (facing === "up") return dy === -1 && dx === 0;
+    if (facing === "down") return dy === 1 && dx === 0;
+    if (facing === "left") return dx === -1 && dy === 0;
+    return dx === 1 && dy === 0;
+  });
+  if (facingMatch) return facingMatch;
+
+  return adjacent[0] ?? null;
 }
 
 export function facingTile(pos: TilePosition, facing: Direction): { x: number; y: number } {

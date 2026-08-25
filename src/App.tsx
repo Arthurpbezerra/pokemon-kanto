@@ -59,7 +59,7 @@ type Pokemon = {
   isShiny?: boolean;
 };
 
-export type PlayerScreen = "lobby" | "starter" | "map";
+export type PlayerScreen = "lobby" | "sprite" | "starter" | "map";
 
 const MAX_TEAM_SIZE = 6;
 const INITIAL_POKEBALLS = 10;
@@ -628,12 +628,15 @@ function useGameState(socket: Socket | null) {
   const startGameIfReady = (forPlayerId?: string) => {
     if (players.length === 0) return;
     if (forPlayerId) {
-      setPlayers((ps) => ps.map((pl) => (pl.id === forPlayerId ? { ...pl, screen: "starter" as PlayerScreen } : pl)));
+      setPlayers((ps) => ps.map((pl) => (pl.id === forPlayerId ? { ...pl, screen: "sprite" as PlayerScreen } : pl)));
       return;
     }
     const allReady = players.every((p) => p.isReady);
     const canStart = allReady || players.length === 1;
-    if (canStart) setPhase("starter");
+    if (canStart) {
+      setPlayers((ps) => ps.map((pl) => ({ ...pl, screen: "sprite" as PlayerScreen })));
+      setPhase("starter");
+    }
   };
 
   const startSingleplayer = (playerName: string) => {
@@ -663,6 +666,13 @@ function useGameState(socket: Socket | null) {
     setPvpRequest(null);
     setPvpBattle(null);
     setPvpTrade(null);
+  };
+
+  const selectSprite = (playerId: string, spriteId: string) => {
+    if (!PLAYER_SPRITE_PRESETS.some((s: { id: string }) => s.id === spriteId)) return;
+    setPlayers((ps) =>
+      ps.map((pl) => (pl.id === playerId ? { ...pl, spriteId, screen: "starter" as PlayerScreen } : pl))
+    );
   };
 
   const selectStarter = (playerId: string, starterId: number) => {
@@ -1483,6 +1493,7 @@ function useGameState(socket: Socket | null) {
     toggleReady,
     startGameIfReady,
     selectStarter,
+    selectSprite,
     currentPlayerIndex,
     setCurrentPlayerIndex,
     movePlayer,
@@ -1663,7 +1674,7 @@ export default function App() {
   const effectivePhase: Phase =
     isMultiplayer && game.phase === "battle" && !isMyBattle ? "map" : game.phase;
 
-  const viewScreen: "home" | "lobby" | "starter" | "map" =
+  const viewScreen: "home" | "lobby" | "sprite" | "starter" | "map" =
     effectivePhase === "home"
       ? "home"
       : effectivePhase === "battle" && !isMyBattle
@@ -1724,6 +1735,15 @@ export default function App() {
             roomCode={game.roomCode}
             myPlayerId={myPlayerIdForUi}
             independentStart={isMultiplayer || isSolo}
+            onLeaveRoom={() => setShowLeaveConfirm(true)}
+          />
+        )}
+
+        {viewScreen === "sprite" && (
+          <SpriteSelectScreen
+            players={game.players}
+            selectSprite={game.selectSprite}
+            myPlayerId={myPlayerIdForUi}
             onLeaveRoom={() => setShowLeaveConfirm(true)}
           />
         )}
@@ -2541,6 +2561,78 @@ function LobbyScreen({ players, addPlayer, toggleReady, startGame, roomCode, myP
         >
           Start Game
         </button>
+      </div>
+    </div>
+  );
+}
+
+function OverworldSpritePreview({ sheetUrl, frameCols }: { sheetUrl: string; frameCols: number }) {
+  const frameW = 16;
+  const frameH = 32;
+  const scale = 3;
+  return (
+    <div
+      className="mx-auto overflow-hidden"
+      style={{ width: frameW * scale, height: frameH * scale, imageRendering: "pixelated" }}
+    >
+      <img
+        src={sheetUrl}
+        alt=""
+        style={{
+          width: frameCols * frameW * scale,
+          height: frameH * scale,
+          objectFit: "none",
+          objectPosition: "0 0",
+          imageRendering: "pixelated",
+          display: "block",
+        }}
+      />
+    </div>
+  );
+}
+
+function SpriteSelectScreen({
+  players,
+  selectSprite,
+  myPlayerId,
+  onLeaveRoom,
+}: {
+  players: Player[];
+  selectSprite: (playerId: string, spriteId: string) => void;
+  myPlayerId?: string;
+  onLeaveRoom?: () => void;
+}) {
+  return (
+    <div>
+      <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+        <h2 className="section-title text-sm sm:text-base">Choose your character</h2>
+        {onLeaveRoom && (
+          <button type="button" className="pixel-btn text-xs text-red-300 border-red-500/50 hover:bg-red-900/30" onClick={onLeaveRoom}>
+            Leave room
+          </button>
+        )}
+      </div>
+      <p className="text-xs text-gray-400 mb-4">Sprites from Pokémon FireRed overworld NPC sheets.</p>
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+        {PLAYER_SPRITE_PRESETS.map((preset) => (
+          <div key={preset.id} className="p-3 bg-gray-800 rounded-md text-center border border-gray-700/60">
+            <OverworldSpritePreview sheetUrl={preset.sheetUrl} frameCols={preset.frameCols} />
+            <div className="mt-2 text-xs sm:text-sm">{preset.label}</div>
+            <div className="mt-2 flex flex-col gap-2">
+              {myPlayerId != null ? (
+                <button className="pixel-btn w-full text-xs" onClick={() => selectSprite(myPlayerId, preset.id)}>
+                  Pick
+                </button>
+              ) : (
+                players.map((p) => (
+                  <button key={p.id} className="pixel-btn w-full text-xs" onClick={() => selectSprite(p.id, preset.id)}>
+                    Pick as {p.name}
+                  </button>
+                ))
+              )}
+            </div>
+          </div>
+        ))}
       </div>
     </div>
   );

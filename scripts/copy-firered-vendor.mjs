@@ -44,6 +44,7 @@ const sprites = [
   "mom",
   "daisy",
   "blue",
+  "fisher",
 ];
 
 function mustCopy(from, to) {

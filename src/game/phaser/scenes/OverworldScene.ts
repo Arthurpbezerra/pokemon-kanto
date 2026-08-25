@@ -3,10 +3,10 @@ import type { Direction, TilePosition } from "../../../world/tileWorld";
 import {
   PALLET_MAPS,
   facingTile,
+  findNpcForInteract,
   getPalletMap,
   getWarpAt,
   isBlockedTile,
-  npcAt,
   npcsOnMap,
   type MapNpc,
 } from "../../../world/palletMaps";
@@ -437,12 +437,12 @@ export class OverworldScene extends Phaser.Scene {
   }
 
   private tryInteract() {
-    const front = facingTile(this.bridgeState.tilePos, this.facing);
-    const npc = npcAt(this.mapData.id, front.x, front.y);
+    const npc = findNpcForInteract(this.mapData.id, this.bridgeState.tilePos, this.facing);
     if (npc) {
       this.callbacks.onNpcInteract?.(npc);
       return;
     }
+    const front = facingTile(this.bridgeState.tilePos, this.facing);
     const other = this.bridgeState.nearbyPlayers.find(
       (p) => p.tilePos?.mapId === this.mapData.id && p.tilePos.x === front.x && p.tilePos.y === front.y
     );
