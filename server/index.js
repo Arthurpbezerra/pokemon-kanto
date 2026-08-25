@@ -2,7 +2,7 @@ import express from "express";
 import { createServer } from "http";
 import { Server } from "socket.io";
 import { resolvePvpTurn, applyForcedSwitch } from "./battle.js";
-import { canInteract, canonicalMapId, DEFAULT_SPAWN, findOpenTile, getWarp, isLegalMove } from "./maps/pallet.js";
+import { canInteract, canonicalMapId, DEFAULT_SPAWN, findOpenTile, getWarp, isLegalMove, isLegalWarp } from "./maps/pallet.js";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -300,11 +300,18 @@ io.on("connection", (socket) => {
     const occupied = state.players
       .filter((p) => p.id && p.id !== player.id && p.tilePos)
       .map((p) => p.tilePos);
-    const warp = getWarp(from.mapId, from.x, from.y);
-    if (warp && warp.toMapId === nextPos.mapId) {
-      nextPos = findOpenTile(warp.toMapId, { x: warp.toX, y: warp.toY }, occupied);
+    const via = payload?.viaTile;
+    let legal = false;
+    if (via && typeof via.mapId === "string" && typeof via.x === "number" && typeof via.y === "number") {
+      legal = isLegalWarp(from, via, nextPos, occupied);
+    } else {
+      const warp = getWarp(from.mapId, from.x, from.y);
+      if (warp && warp.toMapId === nextPos.mapId) {
+        nextPos = findOpenTile(warp.toMapId, { x: warp.toX, y: warp.toY }, occupied);
+      }
+      legal = isLegalMove(from, nextPos, occupied);
     }
-    if (!isLegalMove(from, nextPos, occupied)) {
+    if (!legal) {
       player.moveSeq = (player.moveSeq || 0) + 1;
       socket.emit("moveRejected", {
         playerId: player.id,

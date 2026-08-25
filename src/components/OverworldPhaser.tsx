@@ -29,7 +29,7 @@ type Props = {
   locationType: "town" | "grass" | "water" | "cave";
   canEncounter: boolean;
   nearbyPlayers?: NearbyPlayer[];
-  onTravel: (to: string, spawnTile?: TilePosition) => void;
+  onTravel: (to: string, spawnTile: TilePosition, fromTile: TilePosition) => void;
   onSearchWild?: () => void;
   onStayHere?: () => void;
   onUpdateTilePos?: (playerId: string, next: TilePosition, facing: Direction, moving: boolean) => void;
@@ -139,7 +139,7 @@ export default function OverworldPhaser({
       tilePos: nextPos,
       spriteId: currentSpriteId,
       canEncounter,
-      nearbyPlayers,
+      nearbyPlayers: [],
     });
   }, [
     playerId,
@@ -149,9 +149,12 @@ export default function OverworldPhaser({
     currentTilePos?.y,
     currentSpriteId,
     canEncounter,
-    nearbyPlayers,
     currentLocation,
   ]);
+
+  useEffect(() => {
+    sceneRef.current?.syncNearbyPlayers(nearbyPlayers);
+  }, [nearbyPlayers]);
 
   return (
     <div className="card-panel p-2 sm:p-3 border border-amber-500/40 overflow-hidden">

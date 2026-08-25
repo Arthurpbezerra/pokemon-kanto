@@ -25,7 +25,7 @@ type PvpBattleLike = {
 type Props = {
   players: PlayerLike[];
   currentPlayerIndex: number;
-  movePlayer: (playerId: string, to: string, options?: { skipEntryEncounter?: boolean; spawnTile?: TilePosition; skipTownUi?: boolean }) => void;
+  movePlayer: (playerId: string, to: string, options?: { skipEntryEncounter?: boolean; spawnTile?: TilePosition; skipTownUi?: boolean; fromTile?: TilePosition }) => void;
   setPlayerTilePos: (playerId: string, next: TilePosition, facing: Direction, moving: boolean) => void;
   setPlayerSprite: (playerId: string, spriteId: string) => void;
   healPlayer: (playerId: string) => void;
@@ -109,10 +109,11 @@ export default function PalletMapScreen({
             locationType="town"
             canEncounter={false}
             nearbyPlayers={nearbyPlayers}
-            onTravel={(to: string, spawnTile?: TilePosition) =>
+            onTravel={(to: string, spawnTile: TilePosition, fromTile: TilePosition) =>
               movePlayer(current.id, to, {
                 skipEntryEncounter: true,
                 spawnTile,
+                fromTile,
                 skipTownUi: true,
               })
             }

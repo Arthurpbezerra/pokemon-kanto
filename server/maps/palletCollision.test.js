@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { isBlocked, isLegalMove, canInteract, DEFAULT_SPAWN, getWarp, findOpenTile } from "./pallet.js";
+import { isBlocked, isLegalMove, isLegalWarp, canInteract, DEFAULT_SPAWN, getWarp, findOpenTile } from "./pallet.js";
 
 describe("pallet collision", () => {
   it("blocks water and house bodies using FireRed map.bin", () => {
@@ -37,6 +37,19 @@ describe("pallet collision", () => {
     assert.ok(warp);
     assert.equal(
       isLegalMove({ mapId: "pallet_town", x: 6, y: 7 }, { mapId: warp.toMapId, x: warp.toX, y: warp.toY }),
+      true
+    );
+  });
+
+  it("allows atomic warp via door tile when still one step away on server", () => {
+    const warp = getWarp("pallet_town", 6, 7);
+    assert.ok(warp);
+    assert.equal(
+      isLegalWarp(
+        { mapId: "pallet_town", x: 6, y: 8 },
+        { mapId: "pallet_town", x: 6, y: 7 },
+        { mapId: warp.toMapId, x: warp.toX, y: warp.toY }
+      ),
       true
     );
   });

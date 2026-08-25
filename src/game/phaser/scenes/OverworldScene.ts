@@ -43,7 +43,7 @@ export type PhaserBridgeState = {
 
 export type PhaserBridgeCallbacks = {
   onUpdateTilePos?: (playerId: string, next: TilePosition, facing: Direction, moving: boolean) => void;
-  onTravel?: (toLocation: string, spawnTile?: TilePosition) => void;
+  onTravel?: (toLocation: string, spawnTile: TilePosition, fromTile: TilePosition) => void;
   onSearchWild?: () => void;
   onStayHere?: () => void;
   onNpcInteract?: (npc: MapNpc) => void;
@@ -120,6 +120,7 @@ export class OverworldScene extends Phaser.Scene {
   private spaceKey?: Phaser.Input.Keyboard.Key;
   private statusText: Phaser.GameObjects.Text | null = null;
   private idleEmitted = true;
+  private pendingStep: TilePosition | null = null;
   private readonly cameraTilesW = 15;
   private readonly cameraTilesH = 10;
 
@@ -145,18 +146,26 @@ export class OverworldScene extends Phaser.Scene {
     this.bridgeState = nextState;
 
     if (mapChanged) {
+      this.pendingStep = null;
       this.loadMap(nextState.tilePos.mapId, nextState.tilePos);
       return;
     }
     if (spriteChanged && this.ready) this.createOrReplaceLocalPlayer();
-    if (!this.moving && this.player) {
+    if (this.moving) return;
+    if (this.player) {
       const px = tileCenter(nextState.tilePos.x, this.mapData.tileSize);
       const py = tileCenter(nextState.tilePos.y, this.mapData.tileSize);
       if (Math.abs(this.player.x - px) > 2 || Math.abs(this.player.y - (py + 8)) > 2) {
         this.positionLocalActor(nextState.tilePos.x, nextState.tilePos.y);
+        this.bridgeState = { ...this.bridgeState, tilePos: nextState.tilePos };
       }
     }
     this.syncRemotePlayers(next.nearbyPlayers);
+  }
+
+  public syncNearbyPlayers(players: NearbyPlayer[]) {
+    this.bridgeState = { ...this.bridgeState, nearbyPlayers: players };
+    this.syncRemotePlayers(players);
   }
 
   public setPadDirection(direction: Direction | null) {
@@ -486,17 +495,30 @@ export class OverworldScene extends Phaser.Scene {
     }
 
     const nextTile: TilePosition = { mapId: this.mapData.id, x: nextX, y: nextY };
-    this.bridgeState = { ...this.bridgeState, tilePos: nextTile };
+    this.pendingStep = nextTile;
     this.moving = true;
     this.idleEmitted = false;
     this.stepCooldown = STEP_MS;
     playWalk(this.player, this.playerSheetKey, direction);
     this.player.setDepth(actorDepth(nextY));
     this.playerShadow?.setDepth(actorDepth(nextY) - 1);
-    this.callbacks.onUpdateTilePos?.(this.bridgeState.playerId, nextTile, this.facing, true);
 
     const targetX = tileCenter(nextX, this.mapData.tileSize);
     const targetY = tileCenter(nextY, this.mapData.tileSize);
+    const finishStep = () => {
+      this.moving = false;
+      this.bridgeState = { ...this.bridgeState, tilePos: nextTile };
+      this.pendingStep = null;
+      const warp = getWarpAt(this.mapData, nextX, nextY);
+      if (warp) {
+        const dest: TilePosition = { mapId: warp.toMapId, x: warp.toX, y: warp.toY };
+        this.bridgeState = { ...this.bridgeState, tilePos: dest };
+        this.loadMap(warp.toMapId, dest);
+        this.callbacks.onTravel?.(warp.toLocation, dest, nextTile);
+        return;
+      }
+      this.callbacks.onUpdateTilePos?.(this.bridgeState.playerId, nextTile, this.facing, false);
+    };
     this.tweens.add({
       targets: this.player,
       x: targetX,
@@ -510,17 +532,7 @@ export class OverworldScene extends Phaser.Scene {
       y: targetY + 6,
       duration: STEP_MS,
       ease: "Linear",
-      onComplete: () => {
-        this.moving = false;
-        const warp = getWarpAt(this.mapData, nextX, nextY);
-        if (warp) {
-          this.callbacks.onTravel?.(warp.toLocation, {
-            mapId: warp.toMapId,
-            x: warp.toX,
-            y: warp.toY,
-          });
-        }
-      },
+      onComplete: finishStep,
     });
   }
 }

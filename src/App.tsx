@@ -693,7 +693,7 @@ function useGameState(socket: Socket | null) {
   const movePlayer = (
     playerId: string,
     to: string,
-    options?: { skipEntryEncounter?: boolean; spawnTile?: TilePosition; skipTownUi?: boolean }
+    options?: { skipEntryEncounter?: boolean; spawnTile?: TilePosition; skipTownUi?: boolean; fromTile?: TilePosition }
   ) => {
     const pl = players.find((p) => p.id === playerId);
     if (pl) {
@@ -718,13 +718,22 @@ function useGameState(socket: Socket | null) {
       )
     );
     if (socket && roomCode && roomCode !== "SOLO" && socket.id === playerId) {
-      socket.emit("playerMove", {
+      const payload: {
+        mapId: string;
+        x: number;
+        y: number;
+        facing: Direction;
+        moving: boolean;
+        viaTile?: TilePosition;
+      } = {
         mapId: targetTile.mapId,
         x: targetTile.x,
         y: targetTile.y,
         facing: facingForEmit,
         moving: false,
-      });
+      };
+      if (options?.fromTile) payload.viaTile = options.fromTile;
+      socket.emit("playerMove", payload);
     }
     if (options?.skipEntryEncounter) return;
     const loc = LOCATIONS[to];

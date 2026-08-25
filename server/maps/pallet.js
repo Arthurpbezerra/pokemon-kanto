@@ -153,11 +153,40 @@ export function isLegalMove(from, to, occupied = []) {
     return dest.x === open.x && dest.y === open.y;
   }
 
-  if (src.mapId !== dest.mapId) return false;
+  if (src.mapId !== dest.mapId) {
+    const map = getMap(src.mapId);
+    if (!map) return false;
+    for (const w of map.warps) {
+      if (w.toMapId !== dest.mapId) continue;
+      const door = { mapId: src.mapId, x: w.x, y: w.y };
+      if (manhattan(src, door) !== 1) continue;
+      const open = findOpenTile(dest.mapId, { x: w.toX, y: w.toY }, occupied);
+      if (dest.x === open.x && dest.y === open.y) return true;
+    }
+    return false;
+  }
+
   if (manhattan(src, dest) !== 1) return false;
   if (isBlocked(dest.mapId, dest.x, dest.y)) return false;
   if (occupied.some((p) => p.mapId === dest.mapId && p.x === dest.x && p.y === dest.y)) return false;
   return true;
+}
+
+export function isLegalWarp(from, via, to, occupied = []) {
+  if (!from || !via || !to) return false;
+  const src = { mapId: canonicalMapId(from.mapId), x: Math.round(from.x), y: Math.round(from.y) };
+  const door = { mapId: canonicalMapId(via.mapId), x: Math.round(via.x), y: Math.round(via.y) };
+  const dest = { mapId: canonicalMapId(to.mapId), x: Math.round(to.x), y: Math.round(to.y) };
+  if (src.mapId !== door.mapId) return false;
+  if (!isSameTile(src, door)) {
+    if (manhattan(src, door) !== 1) return false;
+    if (isBlocked(door.mapId, door.x, door.y)) return false;
+    if (occupied.some((p) => p.mapId === door.mapId && p.x === door.x && p.y === door.y)) return false;
+  }
+  const warp = getWarp(door.mapId, door.x, door.y);
+  if (!warp || warp.toMapId !== dest.mapId) return false;
+  const open = findOpenTile(dest.mapId, { x: warp.toX, y: warp.toY }, occupied);
+  return dest.x === open.x && dest.y === open.y;
 }
 
 export function canInteract(aPos, aFacing, bPos) {
