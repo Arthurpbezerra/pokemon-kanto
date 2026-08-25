@@ -1,6 +1,6 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { io, Socket } from "socket.io-client";
-import { getPokemonTemplate, getStarters, makeInstanceFromTemplate, getMovesForLevel, getMovesLearnedAtLevel, getNextEvolution, xpToNextForLevel } from "./api/pokeapi";
+import { getPokemonTemplate, getStarters, makeInstanceFromTemplate, getMovesForLevel, getMovesLearnedAtLevel, getNextEvolution, prefetchPokemonTemplates, xpToNextForLevel } from "./api/pokeapi";
 import * as sound from "./audio/sound";
 import BottomNav from "./components/BottomNav";
 import TeamPanel from "./components/TeamPanel";
@@ -10,10 +10,37 @@ import CityModal from "./components/CityModal";
 import AchievementToast, { type AchievementData } from "./components/AchievementToast";
 import KantoMapView from "./components/KantoMapView";
 import SecretGigiEvent, { clearGigiEventStorage } from "./components/SecretGigiEvent";
+import PalletMapScreen from "./components/PalletMapScreen";
 import { isSecretGigiName, EEVEE_ID } from "./secret-gigi.config";
+import {
+  PLAYER_SPRITE_PRESETS,
+  DEFAULT_SPAWN,
+  getMapById,
+  getMapForLocation,
+  hasMapId,
+  pickDirectionalConnection,
+  toTilePosition,
+  type Direction,
+  type TilePosition,
+} from "./world/tileWorld";
+import { canInteractPlayers } from "./world/palletMaps";
 
 const WS_URL = (import.meta.env.VITE_WS_URL && String(import.meta.env.VITE_WS_URL).trim()) || (typeof window !== "undefined" ? window.location.origin : "http://localhost:3001");
 const SOLO_SAVE_KEY = "pokemon-kanto-solo";
+/** Must match server/index.js COLORS / MAX_PLAYERS */
+const ROOM_PLAYER_COLORS = [
+  "#ef4444",
+  "#3b82f6",
+  "#22c55e",
+  "#eab308",
+  "#a855f7",
+  "#f97316",
+  "#14b8a6",
+  "#ec4899",
+  "#84cc16",
+  "#06b6d4",
+];
+const MAX_ROOM_PLAYERS = 10;
 
 type Pokemon = {
   id: number;
@@ -73,6 +100,27 @@ function normalizeBag(bag: any): Bag {
   };
 }
 
+function normalizePlayer(player: Player): Player {
+  const location = player.location || "Pallet Town";
+  const normalizedTilePos =
+    player.tilePos && hasMapId(player.tilePos.mapId)
+      ? { ...player.tilePos, mapId: getMapById(player.tilePos.mapId).id }
+      : { ...DEFAULT_SPAWN };
+  return {
+    ...player,
+    location,
+    bag: normalizeBag(player.bag),
+    tilePos: normalizedTilePos,
+    spriteId: PLAYER_SPRITE_PRESETS.some((preset) => preset.id === player.spriteId)
+      ? player.spriteId
+      : PLAYER_SPRITE_PRESETS[0].id,
+    facing: player.facing ?? "down",
+    moving: player.moving ?? false,
+    lastTown:
+      player.lastTown || "Pallet Town",
+  };
+}
+
 type Player = {
   id: string;
   name: string;
@@ -81,6 +129,13 @@ type Player = {
   isReady?: boolean;
   screen?: PlayerScreen;
   location: string;
+  tilePos?: TilePosition;
+  spriteId?: string;
+  facing?: Direction;
+  moving?: boolean;
+  /** Monotonic seq from server playerMoved; ignore out-of-order deltas. */
+  moveSeq?: number;
+  lastTown?: string;
   team: Pokemon[];
   badges: string[];
   bag?: Bag;
@@ -106,10 +161,13 @@ export type PvpBattle = {
   defenderHp?: number;
   challengerMaxHp?: number;
   defenderMaxHp?: number;
+  challengerIndex?: number;
+  defenderIndex?: number;
+  mustSwitch?: "challenger" | "defender" | null;
   log?: string[];
-  status?: "waiting_moves" | "resolving" | "ended";
-  challengerMove?: string | null;
-  defenderMove?: string | null;
+  status?: "waiting_moves" | "resolving" | "ended" | "waiting_switch";
+  challengerMove?: string | { kind: string; moveName?: string; index?: number } | null;
+  defenderMove?: string | { kind: string; moveName?: string; index?: number } | null;
   winner?: "challenger" | "defender" | null;
 };
 export type PvpTrade = { playerAId: string; playerBId: string; aSelectedIndex: number | null; bSelectedIndex: number | null };
@@ -161,7 +219,7 @@ function getWildPool(loc: LocationDef): number[] {
 
 /** Níveis por local (progressão estilo R/B/Y). Sem min/max = fallback 3–7. */
 const LOCATIONS: Record<string, LocationDef> = {
-  "Pallet Town": { type: "town", connections: ["Route 1"], gym: null, x: 18, y: 70 },
+  "Pallet Town": { type: "town", connections: [], gym: null, x: 18, y: 70 },
   "Route 1": { type: "grass", connections: ["Pallet Town", "Viridian City"], wildPool: [16, 19], nightPool: [19, 41, 163], minLevel: 2, maxLevel: 5, gym: null, x: 18, y: 58 },
   "Viridian City": { type: "town", connections: ["Route 1", "Route 2", "Viridian Gym"], gym: null, x: 18, y: 44 },
   "Route 2": { type: "grass", connections: ["Viridian City", "Viridian Forest"], wildPool: [16, 19, 10, 13], nightPool: [19, 41, 10, 13], minLevel: 3, maxLevel: 6, gym: null, x: 26, y: 36 },
@@ -199,6 +257,10 @@ const LOCATIONS: Record<string, LocationDef> = {
   "Viridian Gym": { type: "town", connections: ["Viridian City"], gym: "Giovanni", x: 18, y: 36 },
   "Indigo Plateau": { type: "town", connections: ["Viridian Gym"], gym: null, league: true, x: 28, y: 10 }
 };
+
+const LOCATION_POINTS: Record<string, { x: number; y: number }> = Object.fromEntries(
+  Object.entries(LOCATIONS).map(([name, loc]) => [name, { x: loc.x, y: loc.y }])
+);
 
 function getWildLevel(loc: LocationDef | undefined): number {
   if (!loc) return 3 + Math.floor(Math.random() * 5);
@@ -265,15 +327,6 @@ const LOCATION_TYPE_LABELS: Record<string, { icon: string; label: string; bg: st
 };
 
 // Layout rows for grid rendering (rows of location names)
-const MAP_ROWS: string[][] = [
-  ["Indigo Plateau", "Pewter City", "Cerulean City", "Lavender Town"],
-  ["Viridian Gym", "Viridian City", "Celadon City", "Saffron City"],
-  ["Pallet Town", "Route 1", "Route 4", "Route 10"],
-  ["Route 21", "Route 2", "Route 5", "Route 11"],
-  ["Cinnabar Island", "Route 12", "Route 16", "Vermilion City"],
-  ["Route 13", "Route 14", "Route 15", "Fuchsia City"]
-];
-
 function useGameState(socket: Socket | null) {
   const [phase, setPhase] = useState<Phase>("home");
   const [roomCode, setRoomCode] = useState("");
@@ -294,6 +347,7 @@ function useGameState(socket: Socket | null) {
   const stateUpdateTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const myBattleRef = useRef<{ phase: Phase; wildEncounter: typeof wildEncounter }>({ phase: "home", wildEncounter: null });
   const playersLengthRef = useRef(0);
+  const soloSaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const STATE_UPDATE_DEBOUNCE_MS = 120;
   myBattleRef.current = { phase, wildEncounter };
   playersLengthRef.current = players.length;
@@ -309,7 +363,7 @@ function useGameState(socket: Socket | null) {
       if (data?.roomCode === "SOLO" && Array.isArray(data.players) && data.players.length > 0) {
         setRoomCode("SOLO");
         setPhase(data.phase === "battle" ? "map" : (data.phase || "map"));
-        setPlayers(data.players.map((p: Player) => ({ ...p, bag: normalizeBag(p.bag) })));
+        setPlayers(data.players.map((p: Player) => normalizePlayer(p)));
         setCurrentPlayerIndex(data.currentPlayerIndex ?? 0);
         setWildEncounter(null);
       }
@@ -321,12 +375,21 @@ function useGameState(socket: Socket | null) {
   // Persist solo game so it survives minimize/background and tab kill
   useEffect(() => {
     if (roomCode !== "SOLO" || players.length === 0) return;
-    try {
-      const toSave = phase === "battle" ? "map" : phase;
-      localStorage.setItem(SOLO_SAVE_KEY, JSON.stringify({ roomCode, phase: toSave, players, currentPlayerIndex }));
-    } catch {
-      // ignore quota / private mode
-    }
+    if (soloSaveTimeoutRef.current) clearTimeout(soloSaveTimeoutRef.current);
+    soloSaveTimeoutRef.current = setTimeout(() => {
+      try {
+        const toSave = phase === "battle" ? "map" : phase;
+        localStorage.setItem(SOLO_SAVE_KEY, JSON.stringify({ roomCode, phase: toSave, players, currentPlayerIndex }));
+      } catch {
+        // ignore quota / private mode
+      }
+    }, 350);
+    return () => {
+      if (soloSaveTimeoutRef.current) {
+        clearTimeout(soloSaveTimeoutRef.current);
+        soloSaveTimeoutRef.current = null;
+      }
+    };
   }, [roomCode, phase, players, currentPlayerIndex]);
 
   const replaceState = (s: GameStateSnapshot) => {
@@ -335,7 +398,7 @@ function useGameState(socket: Socket | null) {
     const inMyBattle = socket && myBattleRef.current.wildEncounter?.triggeredByPlayerId === socket.id;
     const incomingClearsBattle = s.phase !== "battle" || !s.wildEncounter;
     const someoneJustJoined = s.players != null && s.players.length > playersLengthRef.current;
-    const playersWithBag = (s.players ?? []).map((p: Player) => ({ ...p, bag: normalizeBag(p.bag) }));
+    const playersWithBag = (s.players ?? []).map((p: Player) => normalizePlayer(p));
     if (inMyBattle && (incomingClearsBattle || someoneJustJoined)) {
       const myId = socket?.id;
       // Don't apply incoming players for ourselves: keep our identity (color, team, name, badges) from
@@ -351,6 +414,10 @@ function useGameState(socket: Socket | null) {
             ...myPrev,
             badges: mergedBadges.length > 0 ? mergedBadges : (myPrev.badges ?? p.badges ?? []),
             bag: p.bag ?? myPrev.bag,
+            tilePos: p.tilePos ?? myPrev.tilePos ?? toTilePosition(p.location ?? myPrev.location, LOCATION_POINTS[p.location ?? myPrev.location] ?? { x: 18, y: 70 }),
+            spriteId: p.spriteId ?? myPrev.spriteId,
+            facing: p.facing ?? myPrev.facing,
+            moving: p.moving ?? myPrev.moving,
             expShare: myPrev.expShare !== undefined ? myPrev.expShare : p.expShare,
             wildEncounter: p.wildEncounter ?? myPrev.wildEncounter,
             encounterLog: p.encounterLog ?? myPrev.encounterLog,
@@ -385,6 +452,10 @@ function useGameState(socket: Socket | null) {
             ...myPrev,
             badges: mergedBadges.length > 0 ? mergedBadges : (myPrev.badges ?? p.badges ?? []),
             bag: p.bag ?? myPrev.bag,
+            tilePos: myPrev.tilePos ?? p.tilePos ?? toTilePosition(p.location ?? myPrev.location, LOCATION_POINTS[p.location ?? myPrev.location] ?? { x: 18, y: 70 }),
+            spriteId: p.spriteId ?? myPrev.spriteId,
+            facing: p.facing ?? myPrev.facing,
+            moving: p.moving ?? myPrev.moving,
             expShare: myPrev.expShare !== undefined ? myPrev.expShare : p.expShare,
             wildEncounter: myPrev.wildEncounter ?? p.wildEncounter,
             encounterLog: myPrev.encounterLog ?? p.encounterLog,
@@ -421,13 +492,66 @@ function useGameState(socket: Socket | null) {
     const onJoinError = (data: { message?: string }) => {
       setJoinError(data?.message ?? "Could not join room");
     };
+    const onPlayerMoved = (data: {
+      playerId?: string;
+      tilePos?: TilePosition;
+      facing?: Direction;
+      moving?: boolean;
+      seq?: number;
+    }) => {
+      if (!data?.playerId || !data?.tilePos || !hasMapId(data.tilePos.mapId)) return;
+      // Local player already applied optimistic movement.
+      if (socket.id && data.playerId === socket.id) return;
+      const map = getMapById(data.tilePos.mapId);
+      setPlayers((ps) =>
+        ps.map((pl) => {
+          if (pl.id !== data.playerId) return pl;
+          const prevSeq = pl.moveSeq ?? 0;
+          if (data.seq != null && data.seq < prevSeq) return pl;
+          return {
+            ...pl,
+            tilePos: data.tilePos,
+            facing: data.facing ?? pl.facing,
+            moving: data.moving ?? false,
+            moveSeq: data.seq ?? prevSeq,
+            location: map.locationName || pl.location,
+          };
+        })
+      );
+    };
     socket.on("roomCreated", onRoomCreated);
     socket.on("state", onState);
     socket.on("joinError", onJoinError);
+    socket.on("playerMoved", onPlayerMoved);
+    const onMoveRejected = (data: {
+      playerId?: string;
+      tilePos?: TilePosition;
+      facing?: Direction;
+      moving?: boolean;
+      seq?: number;
+    }) => {
+      if (!data?.tilePos || !socket.id || data.playerId !== socket.id) return;
+      setPlayers((ps) =>
+        ps.map((pl) =>
+          pl.id === socket.id
+            ? {
+                ...pl,
+                tilePos: data.tilePos,
+                facing: data.facing ?? pl.facing,
+                moving: false,
+                moveSeq: data.seq ?? pl.moveSeq,
+              }
+            : pl
+        )
+      );
+    };
+    socket.on("moveRejected", onMoveRejected);
     return () => {
       socket.off("roomCreated", onRoomCreated);
       socket.off("state", onState);
       socket.off("joinError", onJoinError);
+      socket.off("playerMoved", onPlayerMoved);
+      socket.off("moveRejected", onMoveRejected);
     };
   }, [socket]);
 
@@ -477,14 +601,19 @@ function useGameState(socket: Socket | null) {
 
   const addPlayer = (name: string) => {
     setPlayers((p) => {
-      if (p.length >= 4) return p;
+      if (p.length >= MAX_ROOM_PLAYERS) return p;
       const next: Player = {
         id: `p${p.length + 1}`,
         name,
-        color: ["red", "blue", "green", "yellow"][p.length],
+        color: ROOM_PLAYER_COLORS[p.length % ROOM_PLAYER_COLORS.length],
         isReady: false,
         screen: "lobby",
         location: "Pallet Town",
+        tilePos: { ...DEFAULT_SPAWN },
+        spriteId: PLAYER_SPRITE_PRESETS[p.length % PLAYER_SPRITE_PRESETS.length]?.id ?? PLAYER_SPRITE_PRESETS[0].id,
+        facing: "down",
+        moving: false,
+        lastTown: "Pallet Town",
         team: [],
         badges: [],
         bag: { ...DEFAULT_BAG }
@@ -515,11 +644,16 @@ function useGameState(socket: Socket | null) {
     setPlayers([{
       id: "solo",
       name,
-      color: "red",
+      color: ROOM_PLAYER_COLORS[0],
       isHost: true,
       isReady: true,
       screen: "lobby",
       location: "Pallet Town",
+      tilePos: { ...DEFAULT_SPAWN },
+      spriteId: PLAYER_SPRITE_PRESETS[0].id,
+      facing: "down",
+      moving: false,
+      lastTown: "Pallet Town",
       team: [],
       badges: [],
       bag: { ...DEFAULT_BAG }
@@ -537,7 +671,14 @@ function useGameState(socket: Socket | null) {
       setPlayers((ps) =>
         ps.map((pl) =>
           pl.id === playerId
-            ? { ...pl, team: [{ ...inst }], location: "Pallet Town", screen: "map" as PlayerScreen }
+            ? {
+                ...pl,
+                team: [{ ...inst }],
+                location: "Pallet Town",
+                tilePos: { ...DEFAULT_SPAWN },
+                screen: "map" as PlayerScreen,
+                lastTown: "Pallet Town",
+              }
             : pl
         )
       );
@@ -549,7 +690,11 @@ function useGameState(socket: Socket | null) {
     }, 50);
   };
 
-  const movePlayer = (playerId: string, to: string) => {
+  const movePlayer = (
+    playerId: string,
+    to: string,
+    options?: { skipEntryEncounter?: boolean; spawnTile?: TilePosition; skipTownUi?: boolean }
+  ) => {
     const pl = players.find((p) => p.id === playerId);
     if (pl) {
       const fromLoc = LOCATIONS[pl.location];
@@ -557,9 +702,31 @@ function useGameState(socket: Socket | null) {
         return;
       }
     }
+    const targetMap = getMapForLocation(to);
+    const targetTile = options?.spawnTile ?? { mapId: targetMap.id, x: targetMap.spawn.x, y: targetMap.spawn.y };
+    const facingForEmit = (pl?.facing ?? "down") as Direction;
     setPlayers((ps) =>
-      ps.map((pl) => (pl.id === playerId ? { ...pl, location: to } : pl))
+      ps.map((pl) =>
+        pl.id === playerId
+          ? {
+              ...pl,
+              location: to,
+              tilePos: targetTile,
+              lastTown: LOCATIONS[to]?.type === "town" ? to : pl.lastTown,
+            }
+          : pl
+      )
     );
+    if (socket && roomCode && roomCode !== "SOLO" && socket.id === playerId) {
+      socket.emit("playerMove", {
+        mapId: targetTile.mapId,
+        x: targetTile.x,
+        y: targetTile.y,
+        facing: facingForEmit,
+        moving: false,
+      });
+    }
+    if (options?.skipEntryEncounter) return;
     const loc = LOCATIONS[to];
     const pool = loc ? getWildPool(loc) : [];
     const canEncounter = pool.length > 0 && (loc?.type === "grass" || loc?.type === "cave" || loc?.type === "water");
@@ -587,6 +754,45 @@ function useGameState(socket: Socket | null) {
         setTimeout(() => setPhase("battle"), 50);
       }).catch(() => {});
     }
+  };
+
+  const walkPlayer = (playerId: string, direction: Direction) => {
+    const player = players.find((p) => p.id === playerId);
+    if (!player) return;
+    const loc = LOCATIONS[player.location];
+    if (!loc?.connections?.length) return;
+    const next = pickDirectionalConnection(player.location, loc.connections, LOCATION_POINTS, direction);
+    if (!next) return;
+    movePlayer(playerId, next);
+  };
+
+  const setPlayerTilePos = (playerId: string, next: TilePosition, facing: Direction, moving: boolean) => {
+    setPlayers((ps) =>
+      ps.map((pl) => {
+        if (pl.id !== playerId) return pl;
+        const normalized = normalizePlayer(pl);
+        return {
+          ...normalized,
+          tilePos: next,
+          facing,
+          moving,
+        };
+      })
+    );
+    if (socket && roomCode && roomCode !== "SOLO" && socket.id === playerId) {
+      socket.emit("playerMove", {
+        mapId: next.mapId,
+        x: next.x,
+        y: next.y,
+        facing,
+        moving,
+      });
+    }
+  };
+
+  const setPlayerSprite = (playerId: string, spriteId: string) => {
+    if (!PLAYER_SPRITE_PRESETS.some((s: { id: string }) => s.id === spriteId)) return;
+    setPlayers((ps) => ps.map((pl) => (pl.id === playerId ? { ...pl, spriteId } : pl)));
   };
 
   const searchWild = (playerId: string) => {
@@ -1015,6 +1221,7 @@ function useGameState(socket: Socket | null) {
     const pl = players.find((p) => p.id === playerId);
     if (!pl) return;
     const lastTown = (() => {
+      if (pl.lastTown) return pl.lastTown;
       const loc = LOCATIONS[pl.location];
       if (loc?.type === "town") return pl.location;
       const visited = Object.entries(LOCATIONS).filter(([, v]) => v.type === "town");
@@ -1026,7 +1233,15 @@ function useGameState(socket: Socket | null) {
         const newTeam = p.team.map((m) => ({ ...m, hp: m.maxHp, isFainted: false }));
         const bag = normalizeBag(p.bag);
         const lostCoins = Math.floor(bag.coins / 2);
-        return { ...p, team: newTeam, location: lastTown, bag: { ...bag, coins: bag.coins - lostCoins } };
+        const townMap = getMapForLocation(lastTown);
+        return {
+          ...p,
+          team: newTeam,
+          location: lastTown,
+          lastTown,
+          tilePos: { mapId: townMap.id, x: townMap.spawn.x, y: townMap.spawn.y },
+          bag: { ...bag, coins: bag.coins - lostCoins },
+        };
       })
     );
   };
@@ -1136,6 +1351,8 @@ function useGameState(socket: Socket | null) {
     const from = players.find((p) => p.id === fromPlayerId);
     const to = players.find((p) => p.id === toPlayerId);
     if (!from || !to || from.team.length === 0 || to.team.length === 0) return;
+    const closeEnough = canInteractPlayers(from, to) || canInteractPlayers(to, from);
+    if (!closeEnough) return;
     setPvpRequest({ fromPlayerId, toPlayerId, type: "battle" });
   };
 
@@ -1144,6 +1361,8 @@ function useGameState(socket: Socket | null) {
     const from = players.find((p) => p.id === fromPlayerId);
     const to = players.find((p) => p.id === toPlayerId);
     if (!from || !to || from.team.length === 0 || to.team.length === 0) return;
+    const closeEnough = canInteractPlayers(from, to) || canInteractPlayers(to, from);
+    if (!closeEnough) return;
     setPvpRequest({ fromPlayerId, toPlayerId, type: "trade" });
   };
 
@@ -1258,6 +1477,9 @@ function useGameState(socket: Socket | null) {
     currentPlayerIndex,
     setCurrentPlayerIndex,
     movePlayer,
+    walkPlayer,
+    setPlayerTilePos,
+    setPlayerSprite,
     wildEncounter,
     setWildEncounter,
     captureAttempt,
@@ -1301,6 +1523,33 @@ function useGameState(socket: Socket | null) {
   };
 }
 
+function usePerformanceBaseline() {
+  const [metrics, setMetrics] = useState({ fps: 0, avgFrameMs: 0, players: 0 });
+  useEffect(() => {
+    let raf = 0;
+    let frames = 0;
+    let last = performance.now();
+    let sum = 0;
+    const tick = (t: number) => {
+      const delta = t - last;
+      last = t;
+      sum += delta;
+      frames += 1;
+      if (sum >= 1000) {
+        const fps = Math.round((frames * 1000) / sum);
+        const avgFrameMs = Number((sum / Math.max(1, frames)).toFixed(2));
+        setMetrics((prev) => ({ ...prev, fps, avgFrameMs }));
+        frames = 0;
+        sum = 0;
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, []);
+  return metrics;
+}
+
 export default function App() {
   const [socket, setSocket] = useState<Socket | null>(null);
   const game = useGameState(socket);
@@ -1333,6 +1582,8 @@ export default function App() {
       return saved ? new Set(JSON.parse(saved)) : new Set();
     } catch { return new Set(); }
   });
+  const [showPerfOverlay, setShowPerfOverlay] = useState(false);
+  const perf = usePerformanceBaseline();
 
   const handleConfirmLeave = () => {
     if (socket && game.roomCode && game.roomCode !== "SOLO") socket.emit("leaveRoom");
@@ -1412,10 +1663,18 @@ export default function App() {
           ? (currentPlayer?.screen ?? "lobby")
           : (effectivePhase === "encounter" || effectivePhase === "battle" ? "map" : effectivePhase);
 
+  useEffect(() => {
+    if (viewScreen !== "map" || !currentPlayer) return;
+    const loc = LOCATIONS[currentPlayer.location];
+    const pool = loc ? getWildPool(loc) : [];
+    if (!pool.length) return;
+    prefetchPokemonTemplates(pool).catch(() => {});
+  }, [viewScreen, currentPlayer?.location, currentPlayer?.id]);
+
   return (
     <div className="min-h-screen p-3 sm:p-4 pb-0">
       <header className="mb-3 sm:mb-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 pb-3 border-b-2 border-amber-500/30">
-        <h1 className="text-sm sm:text-xl text-yellow-300 truncate font-bold">Pokémon Kanto</h1>
+        <h1 className="text-sm sm:text-xl text-yellow-300 truncate font-bold">Pallet Town Demo</h1>
         {viewScreen !== "home" && (
           <div className="text-xs sm:text-sm text-gray-300">
             {isMultiplayer && currentPlayer ? (
@@ -1479,36 +1738,18 @@ export default function App() {
         )}
 
         {viewScreen === "map" && (
-          <MapScreen
+          <PalletMapScreen
             players={game.players}
             currentPlayerIndex={effectivePlayerIndex}
-            movePlayer={(playerId: string, to: string) => {
-              game.movePlayer(playerId, to);
-              const loc = LOCATIONS[to];
-              if (loc?.type === "town") {
-                setTimeout(() => setCityModal({ name: to, description: `${to} — a place of adventure.`, gym: loc.gym ?? null, league: loc.league ?? false }), 150);
-              }
-              const routeTrainer = ROUTE_TRAINERS[to];
-              if (routeTrainer && !defeatedTrainers.has(to) && !game.wildEncounter) {
-                setTimeout(() => {
-                  Promise.all(routeTrainer.team.map((m) => getPokemonTemplate(m.id).then((tpl) => makeInstanceFromTemplate(tpl, m.level)))).then((instances) => {
-                    setRivalBattle({ trainerName: routeTrainer.name, team: instances, index: 0, location: to });
-                  });
-                }, 200);
-              }
-            }}
-            onStayHere={(locationName) => {
-              const loc = LOCATIONS[locationName];
-              if (loc?.type === "town") {
-                setCityModal({ name: locationName, description: `${locationName} — a place of adventure.`, gym: loc.gym ?? null, league: loc.league ?? false });
-              }
-            }}
-            searchWild={game.searchWild}
+            movePlayer={(playerId, to, options) => game.movePlayer(playerId, to, options)}
+            setPlayerTilePos={game.setPlayerTilePos}
+            setPlayerSprite={game.setPlayerSprite}
+            healPlayer={game.healPlayer}
             isMultiplayer={isMultiplayer}
             myPlayerId={isSolo ? currentPlayer?.id ?? null : (isMultiplayer ? currentPlayer?.id ?? null : (socket?.id ?? null))}
             requestPvpBattle={game.requestPvpBattle}
             requestPvpTrade={game.requestPvpTrade}
-            pendingPvpRequest={game.pvpRequest}
+            pvpBattle={game.pvpBattle}
           />
         )}
         <div id="bottom-nav-placeholder"></div>
@@ -1785,14 +2026,17 @@ export default function App() {
           const { challengerId, defenderId } = pvp;
           const challenger = game.players.find((p) => p.id === challengerId);
           const defender = game.players.find((p) => p.id === defenderId);
-          const myLead = currentPlayer.team[0];
-          const theirLead = (socket?.id === challengerId ? defender : challenger)?.team[0];
-          if (!myLead || !theirLead) return null;
           const amChallenger = socket?.id === challengerId;
+          const myIdx = amChallenger ? (pvp.challengerIndex ?? 0) : (pvp.defenderIndex ?? 0);
+          const theirIdx = amChallenger ? (pvp.defenderIndex ?? 0) : (pvp.challengerIndex ?? 0);
+          const myLead = currentPlayer.team[myIdx];
+          const theirLead = (amChallenger ? defender : challenger)?.team[theirIdx];
+          if (!myLead || !theirLead) return null;
           const myHp = amChallenger ? (pvp.challengerHp ?? myLead.hp) : (pvp.defenderHp ?? myLead.hp);
           const theirHp = amChallenger ? (pvp.defenderHp ?? theirLead.hp) : (pvp.challengerHp ?? theirLead.hp);
           const myMaxHp = amChallenger ? (pvp.challengerMaxHp ?? myLead.maxHp) : (pvp.defenderMaxHp ?? myLead.maxHp);
           const theirMaxHp = amChallenger ? (pvp.defenderMaxHp ?? theirLead.maxHp) : (pvp.challengerMaxHp ?? theirLead.maxHp);
+          const iMustSwitch = pvp.status === "waiting_switch" && ((pvp.mustSwitch === "challenger") === amChallenger);
           return (
             <BattleModal
               isPvP
@@ -1800,10 +2044,16 @@ export default function App() {
               enemyPokemon={{ ...theirLead, hp: theirHp, maxHp: theirMaxHp }}
               playerTeam={currentPlayer.team}
               locationType={(LOCATIONS[currentPlayer.location] as any)?.type ?? "town"}
-              pvpBattleState={pvp.status ? { log: pvp.log ?? [], status: pvp.status, winner: pvp.winner, myMoveSubmitted: amChallenger ? pvp.challengerMove != null : pvp.defenderMove != null } : undefined}
+              pvpBattleState={pvp.status ? {
+                log: pvp.log ?? [],
+                status: pvp.status,
+                winner: pvp.winner,
+                mustSwitch: iMustSwitch,
+                myMoveSubmitted: amChallenger ? pvp.challengerMove != null : pvp.defenderMove != null,
+              } : undefined}
               pvpYouWon={pvp.winner != null && (pvp.winner === "challenger") === amChallenger}
-              onPvpSubmitMove={(moveName) => socket?.emit("pvpSubmitMove", moveName)}
-              onSwitchPokemon={(i) => game.updatePlayerLead(currentPlayer.id, i)}
+              onPvpSubmitMove={(moveName) => socket?.emit("pvpSubmitMove", { kind: "move", moveName })}
+              onSwitchPokemon={(i) => socket?.emit("pvpSubmitMove", { kind: "switch", index: i })}
               onEnd={(res) => {
                 sound.stopSfx("battle-start");
                 if (res.playerFinalHp != null && res.enemyFinalHp != null) {
@@ -1973,6 +2223,10 @@ export default function App() {
                   🏆 Hall of Fame ({hallOfFame.length})
                 </button>
               )}
+              <button type="button" className="pixel-btn text-xs mt-2 w-full" onClick={() => setShowPerfOverlay((v) => !v)}>
+                {showPerfOverlay ? "Hide" : "Show"} mobile perf baseline
+              </button>
+              <p className="text-[10px] text-gray-400 mt-1">Targets: FPS at least 55, avg frame at most 18ms during map movement.</p>
               {!muted && (
                 <button type="button" className="pixel-btn text-xs mt-2 w-full" onClick={() => sound.playSfx("battle-start")}>
                   Test sound (battle-start.mp3)
@@ -2090,6 +2344,14 @@ export default function App() {
           onClose={() => setShowKantoMap(false)}
         />
       )}
+      {showPerfOverlay && (
+        <div className="fixed top-2 right-2 z-[80] bg-black/80 border border-amber-500/40 rounded px-2 py-1 text-[10px] text-amber-200 pointer-events-none">
+          <div>FPS: {perf.fps}</div>
+          <div>Frame: {perf.avgFrameMs}ms</div>
+          <div>Players: {game.players.length}</div>
+          <div>Phase: {game.phase}</div>
+        </div>
+      )}
     </div>
   );
 }
@@ -2169,9 +2431,9 @@ function HomeScreen({
           aria-label="Your name"
         />
         <button type="button" className="pixel-btn w-full" onClick={handleCreate} disabled={!socket}>
-          Create room
+          {socket ? "Create room" : "Connecting to server…"}
         </button>
-        <p className="text-muted mt-2">You’ll get a code to share with others.</p>
+        <p className="text-muted mt-2">You’ll get a code to share. Open another browser (or incognito), join with that code, pick a starter, then you should see each other in Pallet Town.</p>
       </div>
 
       <div className="p-4 card-panel rounded-gameLg">
@@ -2209,7 +2471,19 @@ function LobbyScreen({ players, addPlayer, toggleReady, startGame, roomCode, myP
           <h2 className="section-title mb-0">Lobby</h2>
           {roomCode && (
             <p className="text-amber-300 text-[10px] sm:text-xs mt-1">
-              {roomCode === "SOLO" ? "Singleplayer" : <>Share code: <strong className="text-amber-200">{roomCode}</strong></>}
+              {roomCode === "SOLO" ? "Singleplayer" : (
+                <>
+                  Share code: <strong className="text-amber-200 tracking-widest">{roomCode}</strong>
+                  {" "}
+                  <button
+                    type="button"
+                    className="underline text-amber-100"
+                    onClick={() => navigator.clipboard?.writeText(roomCode).catch(() => {})}
+                  >
+                    copy
+                  </button>
+                </>
+              )}
             </p>
           )}
         {independentStart && roomCode && roomCode !== "SOLO" && (
@@ -2288,195 +2562,6 @@ function StarterSelectScreen({ players, selectStarter, starters, myPlayerId, onL
             </div>
           </div>
         ))}
-      </div>
-    </div>
-  );
-}
-
-function MapScreen({
-  players,
-  currentPlayerIndex,
-  movePlayer,
-  searchWild,
-  onStayHere,
-  isMultiplayer,
-  myPlayerId,
-  requestPvpBattle,
-  requestPvpTrade,
-  pendingPvpRequest
-}: {
-  players: Player[];
-  currentPlayerIndex: number;
-  movePlayer: (playerId: string, to: string) => void;
-  searchWild: (playerId: string) => void;
-  onStayHere?: (locationName: string) => void;
-  isMultiplayer?: boolean;
-  myPlayerId?: string | null;
-  requestPvpBattle?: (from: string, to: string) => void;
-  requestPvpTrade?: (from: string, to: string) => void;
-  pendingPvpRequest?: PvpRequest | null;
-}) {
-  const current = players[currentPlayerIndex];
-  const loc = LOCATIONS[current.location];
-  const typeInfo = loc ? LOCATION_TYPE_LABELS[loc.type] ?? { icon: "?", label: loc.type, bg: "bg-gray-700/50" } : { icon: "?", label: "?", bg: "bg-gray-700/50" };
-  const gymLeader = loc?.gym ? GYM_LEADER_SPRITES[loc.gym] : null;
-  const connections = loc?.connections ?? [];
-  const playersHere = isMultiplayer && myPlayerId
-    ? players.filter((p) => p.id !== myPlayerId && p.location === current.location)
-    : [];
-
-  return (
-    <div className="md:flex gap-4">
-      <div className="md:w-2/3 space-y-4 min-w-0">
-        {/* You are here — current location card */}
-        <div className={`card-panel p-3 sm:p-4 border-2 border-amber-500/50 ${typeInfo.bg}`}>
-          <div className="flex items-center gap-2 mb-1">
-            <span className="text-[10px] sm:text-xs font-bold uppercase tracking-wider text-yellow-300">You are here</span>
-            <span className="text-lg sm:text-xl" title={typeInfo.label}>{typeInfo.icon}</span>
-          </div>
-          <div className="flex flex-wrap items-start gap-3 sm:gap-4">
-            <div className="min-w-0">
-              <h2 className="text-base sm:text-xl font-bold text-white truncate">{current.location}</h2>
-              <p className="text-xs sm:text-sm text-gray-300">{typeInfo.label}</p>
-              <p className="text-[10px] sm:text-xs text-amber-300/90 mt-0.5">🏅 Badges: {current.badges?.length ?? 0}/{BADGES_REQUIRED_FOR_LEAGUE}</p>
-            </div>
-            {loc?.gym && (
-              <div className="flex items-center gap-2 bg-gray-800/80 rounded-lg px-2 py-1.5 border border-amber-600/50">
-                <img
-                  src={gymLeader ?? ""}
-                  alt={loc.gym}
-                  className="w-12 h-12 sm:w-14 sm:h-14 object-contain bg-gray-900 rounded"
-                  onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
-                />
-                <div>
-                  <span className="text-[10px] sm:text-xs text-amber-300 block">Gym Leader</span>
-                  <span className="text-sm sm:text-base font-bold text-white">{loc.gym}</span>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Paths from here — map structure */}
-        <div className="card-panel p-3 sm:p-4 min-w-0">
-          <div className="flex items-center gap-2 mb-3">
-            <span className="text-sm sm:text-base font-bold text-yellow-300">Paths from here</span>
-            <span className="text-xs text-gray-400">({connections.length} connection{connections.length !== 1 ? "s" : ""})</span>
-          </div>
-          <div className="space-y-2">
-            {connections.map((c) => {
-              const connLoc = LOCATIONS[c];
-              const connType = connLoc ? (LOCATION_TYPE_LABELS[connLoc.type] ?? { icon: "•", label: connLoc.type }) : { icon: "•", label: "" };
-              const wildInfo = connLoc?.wildPool?.length ? ` · ${connLoc.wildPool.length} wilds` : "";
-              const blocked = loc?.gym && loc.gym !== "Giovanni" && GYM_BLOCKED_EXITS[current.location]?.includes(c) && !current.badges?.includes(loc.gym);
-              return (
-                <div key={c} className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 bg-gray-700/80 hover:bg-gray-700 p-2.5 rounded-lg border border-gray-600/50">
-                  <div className="flex items-center gap-2 min-w-0 flex-1">
-                    <span className="text-base flex-shrink-0" title={connType.label}>{connType.icon}</span>
-                    <div className="min-w-0">
-                      <div className="font-bold text-xs sm:text-base truncate text-white">{c}</div>
-                      <div className="text-[10px] sm:text-xs text-gray-400 truncate">{connType.label}{wildInfo}{blocked ? " · Defeat the Gym Leader first" : ""}</div>
-                    </div>
-                    <span className="text-gray-500 flex-shrink-0 sm:ml-1">→</span>
-                  </div>
-                  <button
-                    className="pixel-btn w-full sm:w-auto flex-shrink-0 text-xs sm:text-sm"
-                    disabled={!!blocked}
-                    title={blocked ? `Defeat ${loc?.gym} first to go to ${c}` : undefined}
-                    onClick={() => !blocked && movePlayer(current.id, c)}
-                  >
-                    Go
-                  </button>
-                </div>
-              );
-            })}
-          </div>
-          <div className="mt-3 pt-3 border-t border-gray-600/50 flex flex-col sm:flex-row gap-2">
-            {loc?.type === "town" && (
-              <button
-                className="pixel-btn flex-1 text-xs sm:text-sm bg-gray-600/80"
-                onClick={() => onStayHere?.(current.location)}
-              >
-                Stay here
-              </button>
-            )}
-            {loc?.wildPool && loc.wildPool.length > 0 && (
-              <button className="pixel-btn pixel-btn-primary flex-1 text-xs sm:text-sm" onClick={() => searchWild(current.id)}>
-                {loc.type === "cave" ? "⛰" : loc.type === "water" ? "🌊" : "🌿"} Search for wild
-              </button>
-            )}
-          </div>
-        </div>
-
-        {playersHere.length > 0 && (
-          <div className="p-3 bg-gray-800 rounded-lg border border-gray-600/50">
-            <div className="text-xs sm:text-sm font-bold text-yellow-300 mb-2">Players here</div>
-            <div className="flex flex-col gap-2">
-              {playersHere.map((p) => (
-                <div key={p.id} className="flex flex-wrap items-center justify-between gap-2">
-                  <span className="text-xs sm:text-sm truncate">{p.name}</span>
-                  <div className="flex gap-2">
-                    <button className="pixel-btn text-[10px] sm:text-xs" onClick={() => requestPvpBattle?.(myPlayerId!, p.id)}>Battle</button>
-                    <button className="pixel-btn text-[10px] sm:text-xs" onClick={() => requestPvpTrade?.(myPlayerId!, p.id)}>Trade</button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-      </div>
-      <aside className="md:w-1/3 p-3 card-panel mt-3 md:mt-0 min-w-0 border border-gray-700/50">
-        <div className="text-xs sm:text-sm text-gray-400 mb-1">Playing as</div>
-        <div className="text-sm sm:text-base font-bold text-yellow-300 truncate mb-2">{current.name}</div>
-        <div className="text-[10px] sm:text-xs text-gray-500 mb-3 truncate" title={current.location}>📍 {current.location}</div>
-        <div className="text-xs sm:text-sm font-bold text-gray-300 mb-2">Team</div>
-        <div className="space-y-2">
-          {current.team.map((pk, idx) => {
-            const maxHp = pk.maxHp ?? 1;
-            const curHp = pk.hp ?? 0;
-            const pct = Math.max(0, (curHp / maxHp) * 100);
-            const hpCol = pct > 60 ? "bg-green-500" : pct > 30 ? "bg-yellow-500" : "bg-red-500";
-            return (
-              <div key={`${pk.id}-${idx}`} className={`flex items-center gap-2 bg-gray-700/80 p-2 rounded-lg min-w-0 border ${idx === 0 ? "border-amber-500/50" : "border-transparent"}`}>
-                <img src={pk.sprite} className="w-10 h-10 sm:w-12 sm:h-12 flex-shrink-0 rounded-lg bg-gray-800" alt={pk.name} />
-                <div className="min-w-0 flex-1">
-                  <div className="text-xs sm:text-sm truncate">{idx === 0 && "★ "}{pk.name} Lv{pk.level}</div>
-                  <div className="h-1.5 hp-bar bg-gray-800 rounded w-full mt-1 max-w-[100px]">
-                    <div className={`hp-bar-fill h-1.5 ${hpCol} rounded`} style={{ width: `${pct}%` }} />
-                  </div>
-                  <div className="text-[10px] text-gray-400">{pk.hp}/{pk.maxHp}</div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </aside>
-    </div>
-  );
-}
-
-function WildEncounterModal({ pokemon, onCapture, onFlee, onAttack }: { pokemon: Pokemon; onCapture: () => void; onFlee: () => void; onAttack: (move?: string) => void }) {
-  return (
-    <div className="fixed inset-0 flex items-center justify-center bg-black/60">
-      <div className="bg-gray-900 p-6 rounded-md text-center w-11/12 max-w-md">
-        <div className="text-lg mb-2">A wild {pokemon.name} appeared!</div>
-        <img src={pokemon.sprite} alt={pokemon.name} className="mx-auto w-32 h-32" />
-        <div className="mt-2">HP: {pokemon.hp}/{pokemon.maxHp}</div>
-        <div className="mt-4 flex gap-2 flex-wrap justify-center">
-          <button className="pixel-btn" onClick={onCapture}>CAPTURE</button>
-          <button className="pixel-btn" onClick={onFlee}>FLEE</button>
-          <button className="pixel-btn" onClick={() => onAttack(undefined)}>ATTACK</button>
-        </div>
-        {pokemon.moves && pokemon.moves.length > 0 && (
-          <div className="mt-3">
-            <div className="text-sm mb-1">Moves:</div>
-            <div className="flex gap-2 justify-center flex-wrap">
-              {pokemon.moves.map((m) => (
-                <button key={m} className="pixel-btn text-xs" onClick={() => onAttack(m)}>{m}</button>
-              ))}
-            </div>
-          </div>
-        )}
       </div>
     </div>
   );

@@ -12,7 +12,7 @@ export default function BottomNav({ onTeam, onMap, onMenu }: { onTeam: () => voi
         <button
           key={label}
           type="button"
-          className="pixel-btn flex-1 min-w-0 flex flex-col items-center gap-0.5 py-2 text-[8px] sm:text-[10px] max-w-[90px] sm:max-w-[110px]"
+          className="pixel-btn flex-1 min-w-0 flex flex-col items-center gap-0.5 py-2 text-[10px] sm:text-xs max-w-[100px] sm:max-w-[120px]"
           onClick={onClick}
           aria-label={label}
         >

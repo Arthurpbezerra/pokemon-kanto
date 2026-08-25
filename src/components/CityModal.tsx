@@ -67,7 +67,7 @@ export default function CityModal({
                   <div key={item.key} className="flex items-center justify-between gap-2">
                     <span className="text-xs flex-1">{item.icon} {item.label} — {item.price}c <span className="text-gray-500">({owned})</span></span>
                     <button
-                      className="pixel-btn text-xs flex-shrink-0 py-1 min-h-[32px]"
+                      className="pixel-btn text-xs flex-shrink-0 py-1"
                       disabled={!canBuy}
                       onClick={() => canBuy && onBuyItem?.(item.key, item.price)}
                     >

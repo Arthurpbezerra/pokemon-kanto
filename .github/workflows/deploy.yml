@@ -1,11 +1,13 @@
-# Deploy para GitHub Pages a cada push em main.
-# Publica o build no branch gh-pages. Em Settings → Pages use "Deploy from a branch" → gh-pages.
+# Deploy the static front-end to GitHub Pages.
+# Publishes ./dist to the gh-pages branch. Repo Settings → Pages: Deploy from a branch → gh-pages.
+# Site: https://arthurpbezerra.github.io/pokemon-kanto/
+# Set secret VITE_WS_URL to the Render Socket.IO URL (see render.yaml).
 
 name: Deploy to GitHub Pages
 
 on:
   push:
-    branches: [main]
+    branches: [dev]
   workflow_dispatch:
 
 permissions:

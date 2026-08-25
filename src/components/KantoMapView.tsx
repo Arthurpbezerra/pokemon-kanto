@@ -1,4 +1,4 @@
-import React, { useMemo, useEffect, useState, useRef } from "react";
+import React, { useMemo, useEffect, useState } from "react";
 
 export type LocationInfo = {
   type: "town" | "grass" | "water" | "cave";
@@ -88,6 +88,12 @@ const PLAYER_COLORS: Record<string, string> = {
   yellow: "#eab308",
 };
 
+function resolvePlayerFill(color?: string): string {
+  if (!color) return "#94a3b8";
+  if (color.startsWith("#")) return color;
+  return PLAYER_COLORS[color] ?? "#94a3b8";
+}
+
 export default function KantoMapView({
   locations,
   currentLocation,
@@ -141,51 +147,11 @@ export default function KantoMapView({
   }, []);
 
   const currentPos = nodePositions[currentLocation];
-  const prevLocationRef = useRef(currentLocation);
-  const [moveFrom, setMoveFrom] = useState<{ x: number; y: number } | null>(null);
   const [tokenPos, setTokenPos] = useState<{ x: number; y: number } | null>(currentPos ?? null);
 
   useEffect(() => {
-    if (!currentPos) {
-      setTokenPos(null);
-      setMoveFrom(null);
-      prevLocationRef.current = currentLocation;
-      return;
-    }
-    const prev = prevLocationRef.current;
-    if (prev !== currentLocation) {
-      const from = nodePositions[prev];
-      if (from) {
-        setMoveFrom(from);
-        setTokenPos(from);
-        const duration = 400;
-        const start = performance.now();
-        const run = (t: number) => {
-          const elapsed = t - start;
-          const progress = Math.min(1, elapsed / duration);
-          const ease = 1 - (1 - progress) * (1 - progress);
-          setTokenPos({
-            x: from.x + (currentPos.x - from.x) * ease,
-            y: from.y + (currentPos.y - from.y) * ease,
-          });
-          if (progress < 1) requestAnimationFrame(run);
-          else {
-            setMoveFrom(null);
-            setTokenPos(currentPos);
-            prevLocationRef.current = currentLocation;
-          }
-        };
-        requestAnimationFrame(run);
-      } else {
-        setTokenPos(currentPos);
-        setMoveFrom(null);
-        prevLocationRef.current = currentLocation;
-      }
-    } else {
-      setTokenPos(currentPos);
-      setMoveFrom(null);
-    }
-  }, [currentLocation, currentPos, nodePositions]);
+    setTokenPos(currentPos ?? null);
+  }, [currentPos?.x, currentPos?.y]);
 
   const displayPos = tokenPos ?? currentPos;
 
@@ -262,7 +228,6 @@ export default function KantoMapView({
                     fill={style.fill}
                     stroke={isCurrent ? "#fbbf24" : style.stroke}
                     strokeWidth={isCurrent ? 2 : 1}
-                    filter={isCurrent ? "url(#kanto-map-glow)" : undefined}
                   />
                   <text
                     x={x}
@@ -283,7 +248,7 @@ export default function KantoMapView({
               const pos = nodePositions[op.location];
               if (!pos) return null;
               const offset = (idx + 1) * 3;
-              const fill = PLAYER_COLORS[op.color] ?? "#94a3b8";
+              const fill = resolvePlayerFill(op.color);
               return (
                 <g key={`other-${op.name}-${idx}`}>
                   <circle cx={pos.x + offset} cy={pos.y - 2} r={2.2} fill={fill} stroke="#1c1917" strokeWidth={0.6} opacity={0.85} />
@@ -292,22 +257,26 @@ export default function KantoMapView({
               );
             })}
 
-            {/* Player token (board-game style piece with movement animation) */}
+            {/* Player token (GPU-friendly transform transition) */}
             {displayPos && (
               <g
                 className="kanto-map-player-token"
-                style={{ animation: moveFrom ? "none" : "kanto-token-pulse 1.5s ease-in-out infinite" }}
+                style={{
+                  transform: `translate(${displayPos.x}px, ${displayPos.y}px)`,
+                  transition: "transform 400ms ease-out",
+                  animation: "kanto-token-pulse 1.5s ease-in-out infinite",
+                  willChange: "transform"
+                }}
               >
                 <circle
-                  cx={displayPos.x}
-                  cy={displayPos.y}
+                  cx={0}
+                  cy={0}
                   r={3.5}
                   fill="#fef3c7"
                   stroke="#f59e0b"
                   strokeWidth={1.2}
-                  filter="url(#kanto-map-glow)"
                 />
-                <circle cx={displayPos.x} cy={displayPos.y} r={2} fill="#fbbf24" opacity={0.9} />
+                <circle cx={0} cy={0} r={2} fill="#fbbf24" opacity={0.9} />
               </g>
             )}
           </svg>

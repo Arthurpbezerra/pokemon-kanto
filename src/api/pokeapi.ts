@@ -23,12 +23,15 @@ type PokemonTemplate = {
 };
 
 const API_BASE = "https://pokeapi.co/api/v2";
-const LS_TPL_KEY = "pokemon-kanto-tpl-cache";
-const LS_MOVE_KEY = "pokemon-kanto-move-cache";
+const CACHE_VERSION = "v2";
+const LS_TPL_KEY = `pokemon-kanto-tpl-cache-${CACHE_VERSION}`;
+const LS_MOVE_KEY = `pokemon-kanto-move-cache-${CACHE_VERSION}`;
+const LEGACY_LS_TPL_KEY = "pokemon-kanto-tpl-cache";
+const LEGACY_LS_MOVE_KEY = "pokemon-kanto-move-cache";
 
-function loadLsCache<T>(key: string): Map<string | number, T> {
+function loadLsCache<T>(key: string, legacyKey?: string): Map<string | number, T> {
   try {
-    const raw = localStorage.getItem(key);
+    const raw = localStorage.getItem(key) ?? (legacyKey ? localStorage.getItem(legacyKey) : null);
     if (!raw) return new Map();
     const obj = JSON.parse(raw) as Record<string, T>;
     return new Map(Object.entries(obj).map(([k, v]) => [isNaN(Number(k)) ? k : Number(k), v]));
@@ -38,6 +41,25 @@ function loadLsCache<T>(key: string): Map<string | number, T> {
 }
 
 function saveLsCache(key: string, map: Map<any, any>) {
+  const keyRef = key as string;
+  if ((saveLsCache as any)._timers == null) {
+    (saveLsCache as any)._timers = new Map<string, ReturnType<typeof setTimeout>>();
+  }
+  const timers: Map<string, ReturnType<typeof setTimeout>> = (saveLsCache as any)._timers;
+  const existing = timers.get(keyRef);
+  if (existing) clearTimeout(existing);
+  const t = setTimeout(() => {
+    timers.delete(keyRef);
+    try {
+      const obj: Record<string, any> = {};
+      for (const [k, v] of map) obj[String(k)] = v;
+      localStorage.setItem(key, JSON.stringify(obj));
+    } catch {}
+  }, 400);
+  timers.set(keyRef, t);
+}
+
+function saveLsCacheNow(key: string, map: Map<any, any>) {
   try {
     const obj: Record<string, any> = {};
     for (const [k, v] of map) obj[String(k)] = v;
@@ -45,8 +67,14 @@ function saveLsCache(key: string, map: Map<any, any>) {
   } catch {}
 }
 
-const cache: Map<number, PokemonTemplate> = loadLsCache<PokemonTemplate>(LS_TPL_KEY) as Map<number, PokemonTemplate>;
-const moveCache: Map<string, { name: string; power: number | null; accuracy: number | null; damage_class: string | null; type: string; pp?: number }> = loadLsCache(LS_MOVE_KEY) as any;
+const cache: Map<number, PokemonTemplate> = loadLsCache<PokemonTemplate>(LS_TPL_KEY, LEGACY_LS_TPL_KEY) as Map<number, PokemonTemplate>;
+const moveCache: Map<string, { name: string; power: number | null; accuracy: number | null; damage_class: string | null; type: string; pp?: number }> = loadLsCache(LS_MOVE_KEY, LEGACY_LS_MOVE_KEY) as any;
+if (typeof window !== "undefined") {
+  window.addEventListener("beforeunload", () => {
+    saveLsCacheNow(LS_TPL_KEY, cache);
+    saveLsCacheNow(LS_MOVE_KEY, moveCache as any);
+  });
+}
 
 async function fetchRawPokemon(id: number): Promise<RawPokemon> {
   const res = await fetch(`${API_BASE}/pokemon/${id}`);
@@ -54,9 +82,37 @@ async function fetchRawPokemon(id: number): Promise<RawPokemon> {
   return (await res.json()) as RawPokemon;
 }
 
+function fallbackTemplate(id: number): PokemonTemplate {
+  const name = `Pokemon-${id}`;
+  const sprite = `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/${id}.png`;
+  return {
+    id,
+    name,
+    sprite,
+    types: ["normal"],
+    baseStats: {
+      hp: 45,
+      attack: 49,
+      defense: 49,
+      speed: 45,
+      specialAttack: 45,
+      specialDefense: 45,
+    },
+    moves: [{ name: "tackle", versionDetails: [] }],
+  };
+}
+
 export async function getPokemonTemplate(id: number): Promise<PokemonTemplate> {
   if (cache.has(id)) return cache.get(id)!;
-  const raw = await fetchRawPokemon(id);
+  let raw: RawPokemon;
+  try {
+    raw = await fetchRawPokemon(id);
+  } catch {
+    const fb = fallbackTemplate(id);
+    cache.set(id, fb);
+    saveLsCache(LS_TPL_KEY, cache);
+    return fb;
+  }
   const sprite = raw.sprites.front_default || `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/${id}.png`;
   const stats: Record<string, number> = {};
   raw.stats.forEach((s) => {
@@ -131,9 +187,9 @@ export function getMovesForLevel(
   apiMoves: { name: string; versionDetails: { level_learned_at: number; move_learn_method: { name: string }; version_group: { name: string } }[] }[],
   currentLevel: number
 ) {
-  // Prefer red-blue version group, fallback to firered-leafgreen
-  const preferred = "red-blue";
-  const fallback = "firered-leafgreen";
+  // Prefer FireRed/LeafGreen for project consistency, fallback to Red/Blue data.
+  const preferred = "firered-leafgreen";
+  const fallback = "red-blue";
   const movesWithLevels: { name: string; learnedAt: number }[] = [];
 
   for (const mv of apiMoves) {
@@ -162,8 +218,8 @@ export function getMovesLearnedAtLevel(
   apiMoves: { name: string; versionDetails: { level_learned_at: number; move_learn_method: { name: string }; version_group?: { name: string } }[] }[],
   atLevel: number
 ): string[] {
-  const preferred = "red-blue";
-  const fallback = "firered-leafgreen";
+  const preferred = "firered-leafgreen";
+  const fallback = "red-blue";
   const movesWithLevel: { name: string; learnedAt: number }[] = [];
   for (const mv of apiMoves) {
     const vgs = mv.versionDetails.filter((vd) => vd.move_learn_method?.name === "level-up" && vd.level_learned_at === atLevel);
@@ -201,6 +257,38 @@ export async function getMoveData(name: string) {
   moveCache.set(name, entry);
   saveLsCache(LS_MOVE_KEY, moveCache);
   return entry;
+}
+
+export async function prefetchPokemonTemplates(ids: number[], maxConcurrency = 3) {
+  const uniq = [...new Set(ids.filter((id) => Number.isFinite(id) && id > 0))];
+  let cursor = 0;
+  const workers = Array.from({ length: Math.max(1, maxConcurrency) }, async () => {
+    while (cursor < uniq.length) {
+      const i = cursor;
+      cursor += 1;
+      const id = uniq[i];
+      try {
+        await getPokemonTemplate(id);
+      } catch {}
+    }
+  });
+  await Promise.all(workers);
+}
+
+export async function prefetchMoveData(moveNames: string[], maxConcurrency = 4) {
+  const uniq = [...new Set(moveNames.map((m) => (m || "").trim().toLowerCase()).filter(Boolean))];
+  let cursor = 0;
+  const workers = Array.from({ length: Math.max(1, maxConcurrency) }, async () => {
+    while (cursor < uniq.length) {
+      const i = cursor;
+      cursor += 1;
+      const mv = uniq[i];
+      try {
+        await getMoveData(mv);
+      } catch {}
+    }
+  });
+  await Promise.all(workers);
 }
 
 /** Eevee evolui por pedra (Water/Thunder/Fire), não por nível — não evoluir automaticamente. */

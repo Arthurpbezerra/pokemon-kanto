@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { calculateDamage, calculateDamageWithTypes, whoGoesFirst, getMoveStatusEffect, isImmuneToStatus, effectiveSpeed, getMoveDrainRatio, type StatusType } from "../engine/battle";
-import { getMoveData, formatMoveName, xpForDefeatingEnemy } from "../api/pokeapi";
+import { getMoveData, formatMoveName, prefetchMoveData, xpForDefeatingEnemy } from "../api/pokeapi";
 
 const STRUGGLE = { name: "struggle", power: 50, accuracy: 100, damage_class: "physical", type: "normal", pp: 1 };
 
@@ -29,8 +29,9 @@ function getHp(m: { hp?: number } | null | undefined): number {
 
 type PvpBattleState = {
   log: string[];
-  status: "waiting_moves" | "resolving" | "ended";
+  status: "waiting_moves" | "resolving" | "ended" | "waiting_switch";
   myMoveSubmitted?: boolean;
+  mustSwitch?: boolean;
   winner?: "challenger" | "defender" | null;
 };
 
@@ -128,6 +129,14 @@ export default function BattleModal({ playerPokemon, enemyPokemon, playerTeam, o
         setPpMap(map);
       });
   }, [playerPokemon.moves]);
+
+  useEffect(() => {
+    const playerMoves = playerPokemon.moves ?? [];
+    const enemyMoves = enemyPokemon.moves ?? [];
+    const all = [...playerMoves, ...enemyMoves];
+    if (!all.length) return;
+    prefetchMoveData(all).catch(() => {});
+  }, [playerPokemon.moves, enemyPokemon.moves]);
 
   // When parent switches lead after we chose another Pokémon, update local player state
   useEffect(() => {
@@ -641,6 +650,7 @@ export default function BattleModal({ playerPokemon, enemyPokemon, playerTeam, o
   const displayLog = isPvPMode && pvpBattleState?.log ? pvpBattleState.log : log;
   const pvpEnded = isPvPMode && pvpBattleState?.status === "ended";
   const pvpWaiting = isPvPMode && pvpBattleState?.status === "waiting_moves";
+  const pvpSwitchNeeded = isPvPMode && pvpBattleState?.status === "waiting_switch" && pvpBattleState.mustSwitch;
   const pvpMyMoveSubmitted = pvpBattleState?.myMoveSubmitted === true;
 
   if (isPvPMode && pvpEnded) {
@@ -664,10 +674,10 @@ export default function BattleModal({ playerPokemon, enemyPokemon, playerTeam, o
   return (
     <div className="fixed inset-0 z-50 flex flex-col modal-backdrop overflow-y-auto p-2 sm:p-4 safe-area-bottom">
       <div className={`card-panel w-full max-w-2xl mx-auto p-3 sm:p-4 text-white flex-1 min-h-0 flex flex-col border-2 border-amber-500/30 ${bgClass}`}>
-        {(showSwitchPicker || showVoluntarySwitch) ? (
+        {(showSwitchPicker || showVoluntarySwitch || pvpSwitchNeeded) ? (
           <div className="flex flex-col flex-1 min-h-0">
             <div className="text-sm sm:text-base font-bold text-yellow-300 mb-2">
-              {showSwitchPicker ? "Your Pokémon fainted. Choose another:" : "Switch Pokémon"}
+              {showSwitchPicker || pvpSwitchNeeded ? "Your Pokémon fainted. Choose another:" : "Switch Pokémon"}
             </div>
             {showVoluntarySwitch && (
               <button type="button" className="pixel-btn w-full mb-2 text-xs" onClick={() => setShowVoluntarySwitch(false)}>Back</button>
@@ -760,8 +770,8 @@ export default function BattleModal({ playerPokemon, enemyPokemon, playerTeam, o
           ) : !showMoves ? (
             <div className={`grid gap-2 ${(isPvP || isTrainerBattle) ? "grid-cols-2" : "grid-cols-2 sm:grid-cols-2"}`}>
               <button className="pixel-btn pixel-btn-primary w-full" onClick={() => setShowMoves(true)} disabled={busy || (pvpWaiting && pvpMyMoveSubmitted)}>⚔ Attack</button>
-              {!isPvP && onSwitchPokemon && playerTeam && switchOptions.length > 0 && (
-                <button className="pixel-btn w-full" onClick={() => setShowVoluntarySwitch(true)} disabled={busy}>Pokémon</button>
+              {onSwitchPokemon && playerTeam && switchOptions.length > 0 && (
+                <button className="pixel-btn w-full" onClick={() => setShowVoluntarySwitch(true)} disabled={busy || Boolean(pvpWaiting && pvpMyMoveSubmitted)}>Pokémon</button>
               )}
               <button className="pixel-btn w-full" onClick={run} disabled={busy}>{(isPvP || isTrainerBattle) ? "Forfeit" : "Run"}</button>
               {!(isPvP || isTrainerBattle) && onCapture && (

@@ -211,6 +211,298 @@ body {
   backdrop-filter: blur(4px);
 }
 
+.dpad-btn {
+  min-height: 42px;
+  min-width: 42px;
+  font-size: 11px;
+  padding: 6px 8px;
+}
+
+.proto-sprite-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.proto-viewport {
+  position: relative;
+  width: 100%;
+  min-height: 56vh;
+  max-height: 72vh;
+  border: 2px solid rgba(251, 191, 36, 0.45);
+  border-radius: 10px;
+  overflow: hidden;
+  background: linear-gradient(180deg, rgba(15, 23, 42, 0.92), rgba(2, 6, 23, 0.95));
+}
+
+.proto-world-canvas {
+  position: relative;
+  transform: translate3d(0, 0, 0);
+  transition: transform 120ms linear;
+}
+
+.proto-map-image {
+  position: absolute;
+  background-repeat: no-repeat;
+  background-size: 100% 100%;
+  image-rendering: pixelated;
+  border: 1px solid rgba(251, 191, 36, 0.22);
+  overflow: hidden;
+}
+
+.proto-map-image-inline {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: fill;
+  image-rendering: pixelated;
+}
+
+.proto-grass-overlay {
+  position: absolute;
+  background:
+    linear-gradient(180deg, rgba(74, 222, 128, 0.18), rgba(21, 128, 61, 0.18)),
+    repeating-linear-gradient(45deg, rgba(22, 163, 74, 0.16) 0 4px, rgba(21, 128, 61, 0.16) 4px 8px);
+  border: 1px dashed rgba(74, 222, 128, 0.28);
+}
+
+.proto-warp-hint {
+  position: absolute;
+  border: 1px dashed rgba(251, 191, 36, 0.8);
+  background: rgba(251, 191, 36, 0.18);
+  box-shadow: inset 0 0 0 1px rgba(251, 191, 36, 0.2);
+  pointer-events: none;
+}
+
+.proto-player,
+.proto-remote-player {
+  position: absolute;
+  width: 16px;
+  height: 24px;
+  transform: translateZ(0);
+  z-index: 6;
+}
+
+.proto-remote-player {
+  z-index: 4;
+  transition: left 150ms linear, top 150ms linear;
+}
+
+.proto-player-sprite {
+  image-rendering: pixelated;
+  transform: none;
+  transform-origin: top left;
+  display: block;
+}
+
+.proto-remote-player span {
+  position: absolute;
+  top: -16px;
+  left: -10px;
+  font-size: 9px;
+  background: rgba(15, 23, 42, 0.88);
+  color: #fde68a;
+  border: 1px solid rgba(245, 158, 11, 0.45);
+  border-radius: 4px;
+  padding: 1px 4px;
+  white-space: nowrap;
+}
+
+.proto-overlay-dpad {
+  margin-top: 10px;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.phaser-world-wrap,
+.phaser-world-wrap {
+  position: relative;
+}
+
+.phaser-world-shell {
+  width: 100%;
+  height: 64vh;
+  min-height: 56vh;
+  max-height: 72vh;
+  border: 2px solid rgba(251, 191, 36, 0.45);
+  border-radius: 10px;
+  overflow: hidden;
+  background: #020617;
+}
+
+.gba-pad,
+.gba-pad {
+  display: none;
+}
+
+.gba-dpad {
+  position: relative;
+  width: 148px;
+  height: 148px;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.gba-dpad-n,
+.gba-dpad-s,
+.gba-dpad-w,
+.gba-dpad-e,
+.gba-dpad-c {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(40, 40, 55, 0.82);
+  border: 2px solid rgba(251, 191, 36, 0.55);
+  color: #fde68a;
+  pointer-events: none;
+  font-size: 14px;
+}
+
+.gba-dpad-n,
+.gba-dpad-s {
+  left: 52px;
+  width: 44px;
+  height: 52px;
+}
+
+.gba-dpad-n { top: 0; border-radius: 8px 8px 4px 4px; }
+.gba-dpad-s { bottom: 0; border-radius: 4px 4px 8px 8px; }
+
+.gba-dpad-w,
+.gba-dpad-e {
+  top: 52px;
+  width: 52px;
+  height: 44px;
+}
+
+.gba-dpad-w { left: 0; border-radius: 8px 4px 4px 8px; }
+.gba-dpad-e { right: 0; border-radius: 4px 8px 8px 4px; }
+
+.gba-dpad-c {
+  left: 56px;
+  top: 56px;
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  background: rgba(28, 28, 40, 0.9);
+}
+
+.gba-face {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.gba-btn {
+  width: 62px;
+  height: 62px;
+  border-radius: 999px;
+  border: 3px solid rgba(251, 191, 36, 0.7);
+  color: #1a1a2e;
+  font-family: "Press Start 2P", monospace;
+  font-size: 12px;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.gba-btn-a {
+  background: #ef4444;
+  transform: translateY(-8px);
+}
+
+.gba-btn-b {
+  background: #f59e0b;
+  transform: translateY(12px);
+}
+
+.gba-btn {
+  width: 62px;
+  height: 62px;
+  border-radius: 999px;
+  border: 3px solid rgba(251, 191, 36, 0.7);
+  color: #1a1a2e;
+  font-family: "Press Start 2P", monospace;
+  font-size: 12px;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.gba-btn-a { background: #ef4444; transform: translateY(-8px); }
+.gba-btn-b { background: #f59e0b; transform: translateY(12px); }
+
+.gba-btn:active {
+  filter: brightness(0.85);
+}
+
+.phaser-world-wrap { position: relative; }
+.gba-pad { display: none; }
+
+@media (max-width: 768px), (pointer: coarse) {
+  .phaser-world-shell,
+  .phaser-world-shell {
+    height: 48vh;
+    min-height: 42vh;
+    max-height: 52vh;
+  }
+  .gba-pad,
+  .gba-pad {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 8px;
+    padding: 0 10px;
+    padding-bottom: max(8px, env(safe-area-inset-bottom));
+    pointer-events: none;
+    z-index: 5;
+  }
+  .gba-dpad,
+  .gba-dpad,
+  .gba-face,
+  .gba-face {
+    pointer-events: auto;
+  }
+}
+
+@media (max-width: 640px) {
+  .proto-viewport {
+    min-height: 58vh;
+    max-height: 70vh;
+  }
+  .proto-overlay-dpad {
+    justify-content: center;
+  }
+  .phaser-world-shell,
+  .phaser-world-shell {
+    height: 48vh;
+    min-height: 42vh;
+    max-height: 52vh;
+  }
+  .gba-pad,
+  .gba-pad {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 8px;
+    padding: 0 10px;
+    padding-bottom: env(safe-area-inset-bottom);
+    pointer-events: none;
+    z-index: 5;
+  }
+  .gba-dpad,
+  .gba-face {
+    pointer-events: auto;
+  }
+}
+
 .hp-bar {
   border-radius: 6px;
   overflow: hidden;
@@ -238,14 +530,17 @@ body {
 /* Mobile: bottom nav fixed, content has padding so it doesn't sit under nav */
 @media (max-width: 640px) {
   body {
-    font-size: 10px;
+    font-size: 12px;
     padding-bottom: 0;
   }
   .pixel-btn {
     padding: 10px 12px;
-    font-size: 9px;
+    font-size: 11px;
     min-height: 48px;
     border-radius: 6px;
+  }
+  .modal-backdrop {
+    backdrop-filter: none;
   }
   .app-bottom-nav {
     position: fixed;

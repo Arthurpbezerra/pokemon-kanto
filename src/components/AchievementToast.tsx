@@ -48,9 +48,10 @@ export default function AchievementToast({
 
   return (
     <div
-      className={`fixed top-4 left-1/2 -translate-x-1/2 z-[60] max-w-[90vw] sm:max-w-md transition-all duration-300 ${
+      className={`fixed left-1/2 -translate-x-1/2 z-[60] max-w-[90vw] sm:max-w-md transition-all duration-300 ${
         visible ? "opacity-100 translate-y-0" : "opacity-0 -translate-y-4"
       }`}
+      style={{ top: "max(1rem, env(safe-area-inset-top))" }}
     >
       <div className="card-panel border-2 border-amber-500/70 shadow-lg shadow-amber-500/20 px-4 py-3 flex items-center gap-3">
         <span className="text-2xl sm:text-3xl flex-shrink-0" aria-hidden>
