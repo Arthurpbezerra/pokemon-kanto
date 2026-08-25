@@ -14,8 +14,8 @@ const TILE_SIZE = 16;
 
 function frMap(id: string) {
   return {
-    mapImageUrl: publicUrl(`assets/fr/maps/${id}/ground.png`),
-    overlayImageUrl: publicUrl(`assets/fr/maps/${id}/overlay.png`),
+    mapImageUrl: publicUrl(`assets/pokefirered/maps/${id}/ground.png`),
+    overlayImageUrl: publicUrl(`assets/pokefirered/maps/${id}/overlay.png`),
   };
 }
 
@@ -176,7 +176,7 @@ export const PLAYER_SPRITE_PRESETS = [
   {
     id: "red",
     label: "Red",
-    sheetUrl: publicUrl("assets/fr/ow/red_normal.png"),
+    sheetUrl: publicUrl("assets/pokefirered/overworld/red_normal.png"),
     frameCols: 9,
     frameRows: 1,
     renderScale: 1,
@@ -184,7 +184,7 @@ export const PLAYER_SPRITE_PRESETS = [
   {
     id: "leaf",
     label: "Leaf",
-    sheetUrl: publicUrl("assets/fr/ow/green_normal.png"),
+    sheetUrl: publicUrl("assets/pokefirered/overworld/green_normal.png"),
     frameCols: 9,
     frameRows: 1,
     renderScale: 1,

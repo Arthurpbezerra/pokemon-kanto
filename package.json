@@ -7,7 +7,9 @@
     "build": "vite build",
     "preview": "vite preview",
     "maps": "node scripts/build-firered-maps.mjs",
-    "test": "npm --prefix server test"
+    "maps:validate": "node scripts/validate-maps.mjs",
+    "vendor:copy": "node scripts/copy-firered-vendor.mjs",
+    "test": "npm --prefix server test && node scripts/validate-maps.mjs"
   },
   "dependencies": {
     "phaser": "^4.0.0",

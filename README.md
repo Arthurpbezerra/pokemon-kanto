@@ -11,7 +11,7 @@ This is a personal/portfolio prototype, not a commercial product. Pokemon names,
 The original Kanto MVP was a node-graph map (click a town, then battle). This iteration turns the starting town into a **tile-based FireRed overworld**:
 
 - Phaser renders Pallet Town from FireRed tilesets (ground + overlay), not a stretched screenshot.
-- Collision, warps, and NPC spots come from pret [pokefirered](https://github.com/pret/pokefirered) `map.bin` data.
+- Collision, warps, and NPC spots come from pret [pokefirered](https://github.com/pret/pokefirered) data vendored in `vendor/pokefirered/`.
 - Socket.IO keeps other players in sync (position, facing, idle/walk).
 - On phones, a GBA-style D-pad plus A/B sits on the screen.
 
@@ -42,8 +42,11 @@ rooms.json (short-lived persistence)
 
 **Maps**
 
-- `npm run maps` rebuilds those PNGs from a local pret `pokefirered` checkout (sibling folder). **GitHub Actions does not run this** — pret is not on the runner. Commit `public/assets/fr/` so Pages can serve the maps.
+- `vendor/pokefirered/` holds the minimal pret slice used to rebuild maps locally.
+- `npm run maps` bakes PNGs into `public/assets/pokefirered/maps/` and refreshes collision JSON.
+- **GitHub Actions does not run `maps`** — commit the baked PNGs so Pages can serve them.
 - Asset URLs use Vite `BASE_URL` (`/pokemon-kanto/` on Pages). Do not load `/assets/...` from the site root.
+- Detailed pipeline rules live in [`prompts/pokefirered-map-pipeline.md`](prompts/pokefirered-map-pipeline.md).
 
 ## Local development
 
@@ -106,8 +109,10 @@ Free Render services spin down when idle. The first join after a pause can take 
 |---------|----------------|
 | `npm run dev` | Vite dev server |
 | `npm run build` | Production front-end |
-| `npm run maps` | Rebuild Pallet maps from pret (local only; commit the PNGs) |
-| `npm test` / `npm --prefix server test` | Collision and battle tests |
+| `npm run vendor:copy` | Refresh `vendor/pokefirered/` from a local pret checkout |
+| `npm run maps` | Rebuild Pallet maps from the vendored pret slice |
+| `npm run maps:validate` | Validate PNG dimensions and collision parity |
+| `npm test` / `npm --prefix server test` | Collision, battle, and map validation tests |
 
 ## Notes
 

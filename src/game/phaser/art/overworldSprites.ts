@@ -3,14 +3,14 @@ import type { Direction } from "../../../world/tileWorld";
 import { publicUrl } from "../../../publicUrl";
 
 export const OW_SHEETS = {
-  red: { key: "ow-red", url: publicUrl("assets/fr/ow/red_normal.png") },
-  leaf: { key: "ow-leaf", url: publicUrl("assets/fr/ow/green_normal.png") },
-  oak: { key: "ow-oak", url: publicUrl("assets/fr/ow/prof_oak.png") },
-  woman: { key: "ow-woman", url: publicUrl("assets/fr/ow/woman_1.png") },
-  fatMan: { key: "ow-fat-man", url: publicUrl("assets/fr/ow/fat_man.png") },
-  mom: { key: "ow-mom", url: publicUrl("assets/fr/ow/mom.png") },
-  daisy: { key: "ow-daisy", url: publicUrl("assets/fr/ow/daisy.png") },
-  blue: { key: "ow-blue", url: publicUrl("assets/fr/ow/blue.png") },
+  red: { key: "ow-red", url: publicUrl("assets/pokefirered/overworld/red_normal.png") },
+  leaf: { key: "ow-leaf", url: publicUrl("assets/pokefirered/overworld/green_normal.png") },
+  oak: { key: "ow-oak", url: publicUrl("assets/pokefirered/overworld/prof_oak.png") },
+  woman: { key: "ow-woman", url: publicUrl("assets/pokefirered/overworld/woman_1.png") },
+  fatMan: { key: "ow-fat-man", url: publicUrl("assets/pokefirered/overworld/fat_man.png") },
+  mom: { key: "ow-mom", url: publicUrl("assets/pokefirered/overworld/mom.png") },
+  daisy: { key: "ow-daisy", url: publicUrl("assets/pokefirered/overworld/daisy.png") },
+  blue: { key: "ow-blue", url: publicUrl("assets/pokefirered/overworld/blue.png") },
 } as const;
 
 const FRAME_W = 16;

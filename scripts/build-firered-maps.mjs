@@ -1,19 +1,27 @@
 /**
- * Bake pret pokefirered tilesets + map.bin into native 16px ground/overlay PNGs.
+ * Bake vendor/pokefirered tilesets + map.bin into native 16px ground/overlay PNGs.
  */
 import { deflateSync } from "zlib";
-import { mkdirSync, readFileSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
 
 const pokePC = join(dirname(fileURLToPath(import.meta.url)), "..");
-const pret = join(pokePC, "..", "pokefirered");
-const outRoot = join(pokePC, "public", "assets", "fr", "maps");
+const vendor = join(pokePC, "vendor", "pokefirered");
+const outRoot = join(pokePC, "public", "assets", "pokefirered", "maps");
 
 const NUM_PRIMARY_TILES = 640;
 const NUM_PRIMARY_METATILES = 640;
 const TILE = 16;
 const WATER = new Set([0x10, 0x11, 0x12, 0x13, 0x15, 0x16, 0x17, 0x1a, 0x1b]);
+
+function fail(message) {
+  throw new Error(`[build-firered-maps] ${message}`);
+}
+
+function assertFile(path, label) {
+  if (!existsSync(path)) fail(`Missing ${label}: ${path}`);
+}
 
 function crc32(buf) {
   let c = ~0;
@@ -64,11 +72,28 @@ function readPal(path) {
   return colors;
 }
 
+function validateTileset(kind, name) {
+  const dir = join(vendor, "data", "tilesets", kind, name);
+  assertFile(join(dir, "tiles.4bpp"), `${kind}/${name}/tiles.4bpp`);
+  assertFile(join(dir, "metatiles.bin"), `${kind}/${name}/metatiles.bin`);
+  assertFile(join(dir, "metatile_attributes.bin"), `${kind}/${name}/metatile_attributes.bin`);
+  for (let i = 0; i < 16; i++) {
+    assertFile(join(dir, "palettes", `${String(i).padStart(2, "0")}.pal`), `${kind}/${name}/palette ${i}`);
+  }
+}
+
 function loadTileset(kind, name) {
-  const dir = join(pret, "data", "tilesets", kind, name);
+  validateTileset(kind, name);
+  const dir = join(vendor, "data", "tilesets", kind, name);
   const tiles = readFileSync(join(dir, "tiles.4bpp"));
   const metatiles = readFileSync(join(dir, "metatiles.bin"));
   const attrs = readFileSync(join(dir, "metatile_attributes.bin"));
+  if (tiles.length % 32 !== 0) fail(`${kind}/${name}: tiles.4bpp length ${tiles.length} is not a multiple of 32`);
+  if (metatiles.length % 16 !== 0) fail(`${kind}/${name}: metatiles.bin length ${metatiles.length} is not a multiple of 16`);
+  const metaCount = metatiles.length / 16;
+  if (attrs.length !== metaCount * 4) {
+    fail(`${kind}/${name}: metatile_attributes.bin (${attrs.length}) != metatile count (${metaCount}) * 4`);
+  }
   const palettes = [];
   for (let i = 0; i < 16; i++) {
     palettes.push(readPal(join(dir, "palettes", `${String(i).padStart(2, "0")}.pal`)));
@@ -79,8 +104,28 @@ function loadTileset(kind, name) {
     attrs,
     palettes,
     tileCount: tiles.length / 32,
-    metaCount: metatiles.length / 16,
+    metaCount,
   };
+}
+
+function validateMapBin(layoutName, width, height) {
+  const path = join(vendor, "data", "layouts", layoutName, "map.bin");
+  assertFile(path, `layout ${layoutName}/map.bin`);
+  const map = readFileSync(path);
+  const expected = width * height * 2;
+  if (map.length !== expected) {
+    fail(`${layoutName}/map.bin size ${map.length} != expected ${expected} (${width}x${height})`);
+  }
+  return map;
+}
+
+function validateExtras(spec) {
+  for (const [x, y, ch] of spec.extras?.cells || []) {
+    if (x < 0 || y < 0 || x >= spec.width || y >= spec.height) {
+      fail(`${spec.id}: override (${x},${y}) outside map bounds ${spec.width}x${spec.height}`);
+    }
+    if (ch !== "." && ch !== "#") fail(`${spec.id}: override (${x},${y}) must be '.' or '#', got '${ch}'`);
+  }
 }
 
 function decodeTile4bpp(tiles, index) {
@@ -149,8 +194,12 @@ function resolveSet(id, primary, secondary) {
   return { set: secondary, local: id - NUM_PRIMARY_METATILES };
 }
 
-function renderMap(layoutName, width, height, primary, secondary, extras = {}) {
-  const map = readFileSync(join(pret, "data", "layouts", layoutName, "map.bin"));
+function renderMap(spec) {
+  validateExtras(spec);
+  const map = validateMapBin(spec.layout, spec.width, spec.height);
+  const { primary, secondary } = spec;
+  const width = spec.width;
+  const height = spec.height;
   const w = width * TILE;
   const h = height * TILE;
   const ground = Buffer.alloc(w * h * 4);
@@ -181,12 +230,24 @@ function renderMap(layoutName, width, height, primary, secondary, extras = {}) {
     rows.push(row);
   }
 
-  for (const [x, y, ch] of extras.cells || []) {
+  for (const [x, y, ch] of spec.extras?.cells || []) {
     const r = rows[y].split("");
     r[x] = ch;
     rows[y] = r.join("");
   }
-  return { ground, overlay, width: w, height: h, rows };
+
+  return {
+    id: spec.id,
+    groundPng: writePng(w, h, ground),
+    overlayPng: writePng(w, h, overlay),
+    width,
+    height,
+    rows,
+  };
+}
+
+if (!existsSync(vendor)) {
+  fail(`vendor slice missing at ${vendor}. Run: node scripts/copy-firered-vendor.mjs`);
 }
 
 const general = loadTileset("primary", "general");
@@ -251,18 +312,20 @@ const maps = [
   },
 ];
 
-mkdirSync(outRoot, { recursive: true });
+const renderedMaps = maps.map((spec) => renderMap(spec));
 const collision = {};
-for (const spec of maps) {
-  const rendered = renderMap(spec.layout, spec.width, spec.height, spec.primary, spec.secondary, spec.extras);
-  const dir = join(outRoot, spec.id);
+mkdirSync(outRoot, { recursive: true });
+
+for (const rendered of renderedMaps) {
+  const dir = join(outRoot, rendered.id);
   mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, "ground.png"), writePng(rendered.width, rendered.height, rendered.ground));
-  writeFileSync(join(dir, "overlay.png"), writePng(rendered.width, rendered.height, rendered.overlay));
-  collision[spec.id] = { width: spec.width, height: spec.height, rows: rendered.rows };
-  console.log("wrote", spec.id, spec.width, "x", spec.height);
+  writeFileSync(join(dir, "ground.png"), rendered.groundPng);
+  writeFileSync(join(dir, "overlay.png"), rendered.overlayPng);
+  collision[rendered.id] = { width: rendered.width, height: rendered.height, rows: rendered.rows };
+  console.log("wrote", rendered.id, rendered.width, "x", rendered.height);
 }
 
-writeFileSync(join(pokePC, "src", "world", "palletCollision.json"), JSON.stringify(collision, null, 2));
-writeFileSync(join(pokePC, "server", "maps", "palletCollision.json"), JSON.stringify(collision, null, 2));
+const collisionJson = `${JSON.stringify(collision, null, 2)}\n`;
+writeFileSync(join(pokePC, "src", "world", "palletCollision.json"), collisionJson);
+writeFileSync(join(pokePC, "server", "maps", "palletCollision.json"), collisionJson);
 console.log("collision json updated");
