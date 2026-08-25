@@ -42,8 +42,8 @@ rooms.json (short-lived persistence)
 
 **Maps**
 
-- `npm run maps` rebuilds PNGs from a local pret `pokefirered` checkout (sibling folder).
-- Output: `public/assets/fr/maps/<id>/ground.png` and `overlay.png`.
+- `npm run maps` rebuilds those PNGs from a local pret `pokefirered` checkout (sibling folder). **GitHub Actions does not run this** — pret is not on the runner. Commit `public/assets/fr/` so Pages can serve the maps.
+- Asset URLs use Vite `BASE_URL` (`/pokemon-kanto/` on Pages). Do not load `/assets/...` from the site root.
 
 ## Local development
 
@@ -106,7 +106,7 @@ Free Render services spin down when idle. The first join after a pause can take 
 |---------|----------------|
 | `npm run dev` | Vite dev server |
 | `npm run build` | Production front-end |
-| `npm run maps` | Rebuild Pallet maps from pret |
+| `npm run maps` | Rebuild Pallet maps from pret (local only; commit the PNGs) |
 | `npm test` / `npm --prefix server test` | Collision and battle tests |
 
 ## Notes

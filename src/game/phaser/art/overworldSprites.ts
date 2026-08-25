@@ -1,15 +1,16 @@
 import * as Phaser from "phaser";
 import type { Direction } from "../../../world/tileWorld";
+import { publicUrl } from "../../../publicUrl";
 
 export const OW_SHEETS = {
-  red: { key: "ow-red", url: "/assets/fr/ow/red_normal.png" },
-  leaf: { key: "ow-leaf", url: "/assets/fr/ow/green_normal.png" },
-  oak: { key: "ow-oak", url: "/assets/fr/ow/prof_oak.png" },
-  woman: { key: "ow-woman", url: "/assets/fr/ow/woman_1.png" },
-  fatMan: { key: "ow-fat-man", url: "/assets/fr/ow/fat_man.png" },
-  mom: { key: "ow-mom", url: "/assets/fr/ow/mom.png" },
-  daisy: { key: "ow-daisy", url: "/assets/fr/ow/daisy.png" },
-  blue: { key: "ow-blue", url: "/assets/fr/ow/blue.png" },
+  red: { key: "ow-red", url: publicUrl("assets/fr/ow/red_normal.png") },
+  leaf: { key: "ow-leaf", url: publicUrl("assets/fr/ow/green_normal.png") },
+  oak: { key: "ow-oak", url: publicUrl("assets/fr/ow/prof_oak.png") },
+  woman: { key: "ow-woman", url: publicUrl("assets/fr/ow/woman_1.png") },
+  fatMan: { key: "ow-fat-man", url: publicUrl("assets/fr/ow/fat_man.png") },
+  mom: { key: "ow-mom", url: publicUrl("assets/fr/ow/mom.png") },
+  daisy: { key: "ow-daisy", url: publicUrl("assets/fr/ow/daisy.png") },
+  blue: { key: "ow-blue", url: publicUrl("assets/fr/ow/blue.png") },
 } as const;
 
 const FRAME_W = 16;
