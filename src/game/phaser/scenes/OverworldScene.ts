@@ -139,32 +139,40 @@ export class OverworldScene extends Phaser.Scene {
     }
   }
 
+  public setCallbacks(callbacks: PhaserBridgeCallbacks) {
+    this.callbacks = callbacks;
+  }
+
   public syncBridgeState(next: PhaserBridgeState) {
     const nextState = { ...next, tilePos: { ...next.tilePos, mapId: getPalletMap(next.tilePos.mapId).id } };
     const mapChanged = nextState.tilePos.mapId !== this.mapData.id;
     const spriteChanged = next.spriteId !== this.bridgeState.spriteId;
-    this.bridgeState = nextState;
+    const localTile = this.bridgeState.tilePos;
+    this.bridgeState = {
+      ...nextState,
+      tilePos: localTile,
+      nearbyPlayers: this.bridgeState.nearbyPlayers,
+    };
 
     if (mapChanged) {
       this.pendingStep = null;
+      this.moving = false;
       this.loadMap(nextState.tilePos.mapId, nextState.tilePos);
       return;
     }
     if (spriteChanged && this.ready) this.createOrReplaceLocalPlayer();
-    if (this.moving) return;
-    if (this.player) {
-      const px = tileCenter(nextState.tilePos.x, this.mapData.tileSize);
-      const py = tileCenter(nextState.tilePos.y, this.mapData.tileSize);
-      if (Math.abs(this.player.x - px) > 2 || Math.abs(this.player.y - (py + 8)) > 2) {
-        this.positionLocalActor(nextState.tilePos.x, nextState.tilePos.y);
-        this.bridgeState = { ...this.bridgeState, tilePos: nextState.tilePos };
-      }
+    if (this.moving || this.pendingStep || !this.player) return;
+    const dist =
+      Math.abs(nextState.tilePos.x - localTile.x) + Math.abs(nextState.tilePos.y - localTile.y);
+    if (nextState.tilePos.mapId === this.mapData.id && dist > 1) {
+      this.bridgeState = { ...this.bridgeState, tilePos: nextState.tilePos };
+      this.positionLocalActor(nextState.tilePos.x, nextState.tilePos.y);
     }
-    this.syncRemotePlayers(next.nearbyPlayers);
   }
 
   public syncNearbyPlayers(players: NearbyPlayer[]) {
     this.bridgeState = { ...this.bridgeState, nearbyPlayers: players };
+    if (players.length === 0 && this.remotes.size === 0) return;
     this.syncRemotePlayers(players);
   }
 
@@ -236,10 +244,9 @@ export class OverworldScene extends Phaser.Scene {
         const worldWidth = this.mapData.widthTiles * this.mapData.tileSize;
         const worldHeight = this.mapData.heightTiles * this.mapData.tileSize;
         this.cameras.main.setBounds(0, 0, worldWidth, worldHeight);
-        this.physics?.world?.setBounds(0, 0, worldWidth, worldHeight);
         this.createOrReplaceLocalPlayer();
         this.positionLocalActor(spawn.x, spawn.y);
-        if (this.player) this.cameras.main.startFollow(this.player, true, 0.22, 0.22);
+        if (this.player) this.cameras.main.startFollow(this.player, true, 1, 1);
         this.applyCameraZoom();
         this.syncRemotePlayers(this.bridgeState.nearbyPlayers);
         this.showStatus("");
@@ -507,6 +514,7 @@ export class OverworldScene extends Phaser.Scene {
     const targetY = tileCenter(nextY, this.mapData.tileSize);
     const finishStep = () => {
       this.moving = false;
+      this.stepCooldown = 0;
       this.bridgeState = { ...this.bridgeState, tilePos: nextTile };
       this.pendingStep = null;
       const warp = getWarpAt(this.mapData, nextX, nextY);
@@ -520,19 +528,25 @@ export class OverworldScene extends Phaser.Scene {
       this.callbacks.onUpdateTilePos?.(this.bridgeState.playerId, nextTile, this.facing, false);
     };
     this.tweens.add({
-      targets: this.player,
+      targets: [this.player, this.playerShadow].filter(Boolean),
       x: targetX,
-      y: targetY + 8,
-      duration: STEP_MS,
-      ease: "Linear",
-    });
-    this.tweens.add({
-      targets: this.playerShadow,
-      x: targetX,
-      y: targetY + 6,
       duration: STEP_MS,
       ease: "Linear",
       onComplete: finishStep,
     });
+    this.tweens.add({
+      targets: this.player,
+      y: targetY + 8,
+      duration: STEP_MS,
+      ease: "Linear",
+    });
+    if (this.playerShadow) {
+      this.tweens.add({
+        targets: this.playerShadow,
+        y: targetY + 6,
+        duration: STEP_MS,
+        ease: "Linear",
+      });
+    }
   }
 }

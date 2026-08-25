@@ -60,7 +60,17 @@ export default function OverworldPhaser({
   const rootRef = useRef<HTMLDivElement | null>(null);
   const gameRef = useRef<Phaser.Game | null>(null);
   const sceneRef = useRef<OverworldScene | null>(null);
+  const callbacksRef = useRef<PhaserBridgeCallbacks>({});
   const [size, setSize] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
+  callbacksRef.current = {
+    onTravel,
+    onSearchWild,
+    onStayHere,
+    onUpdateTilePos,
+    onNpcInteract,
+    onPlayerInteract,
+    onBlockedMessage,
+  };
 
   useEffect(() => {
     const el = rootRef.current;
@@ -86,30 +96,26 @@ export default function OverworldPhaser({
       tilePos: initialPos,
       spriteId: currentSpriteId,
       canEncounter,
-      nearbyPlayers,
+      nearbyPlayers: [],
     };
     const callbacks: PhaserBridgeCallbacks = {
-      onTravel,
-      onSearchWild,
-      onStayHere,
-      onUpdateTilePos,
-      onNpcInteract,
-      onPlayerInteract,
-      onBlockedMessage,
+      onTravel: (...args) => callbacksRef.current.onTravel?.(...args),
+      onSearchWild: () => callbacksRef.current.onSearchWild?.(),
+      onStayHere: () => callbacksRef.current.onStayHere?.(),
+      onUpdateTilePos: (...args) => callbacksRef.current.onUpdateTilePos?.(...args),
+      onNpcInteract: (...args) => callbacksRef.current.onNpcInteract?.(...args),
+      onPlayerInteract: (...args) => callbacksRef.current.onPlayerInteract?.(...args),
+      onBlockedMessage: (...args) => callbacksRef.current.onBlockedMessage?.(...args),
     };
     const scene = new OverworldScene(state, callbacks);
     sceneRef.current = scene;
     const game = new Phaser.Game({
       type: Phaser.AUTO,
       parent: rootRef.current,
-      scene,
-      physics: {
-        default: "arcade",
-        arcade: { debug: false },
-      },
       width: Math.max(320, size.w) || 860,
       height: Math.max(320, size.h) || 560,
       backgroundColor: "#0b1024",
+      scene,
       render: {
         pixelArt: true,
         antialias: false,
@@ -128,7 +134,9 @@ export default function OverworldPhaser({
       gameRef.current?.destroy(true);
       gameRef.current = null;
     };
-  }, [canInit, size.w, size.h]);
+    // Phaser must not be rebuilt when the React layout shifts by a pixel.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canInit]);
 
   useEffect(() => {
     if (!sceneRef.current) return;
@@ -145,8 +153,6 @@ export default function OverworldPhaser({
     playerId,
     currentPlayerColor,
     currentTilePos?.mapId,
-    currentTilePos?.x,
-    currentTilePos?.y,
     currentSpriteId,
     canEncounter,
     currentLocation,
