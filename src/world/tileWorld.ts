@@ -41,6 +41,12 @@ export type Warp = {
   toX: number;
   toY: number;
   toLocation: string;
+  /** Wooden sign + ground cue for outdoor route warps (not house doors). */
+  marker?: {
+    signTile: { x: number; y: number };
+    direction: "north" | "south";
+    label?: string;
+  };
 };
 
 export type TileTrigger = {

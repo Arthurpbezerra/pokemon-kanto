@@ -1,5 +1,5 @@
 import * as Phaser from "phaser";
-import type { Direction, TilePosition } from "../../../world/tileWorld";
+import type { Direction, TilePosition, Warp } from "../../../world/tileWorld";
 import {
   PALLET_MAPS,
   facingTile,
@@ -76,6 +76,56 @@ function rowDepth(tileY: number) {
 
 function actorDepth(tileY: number) {
   return rowDepth(tileY) + 1;
+}
+
+function spawnRouteWarpMarker(scene: Phaser.Scene, warp: Warp, tileSize: number) {
+  const marker = warp.marker;
+  if (!marker) return;
+
+  const signX = marker.signTile.x;
+  const signY = marker.signTile.y;
+  const cx = tileCenter(signX, tileSize);
+  const cy = tileCenter(signY, tileSize);
+  const depth = actorDepth(signY);
+
+  const warpCx = tileCenter(warp.x, tileSize);
+  const warpCy = tileCenter(warp.y, tileSize);
+  const glow = scene.add
+    .ellipse(warpCx, warpCy + 4, 13, 9, 0xffe566, 0.42)
+    .setDepth(depth - 2);
+  const glowRing = scene.add
+    .ellipse(warpCx, warpCy + 4, 15, 11)
+    .setStrokeStyle(1, 0xfff0a0, 0.55)
+    .setFillStyle(0, 0)
+    .setDepth(depth - 2);
+
+  const g = scene.add.graphics().setDepth(depth);
+  g.fillStyle(0x6b4423, 1);
+  g.fillRect(cx - 1, cy + 2, 3, 9);
+  g.fillStyle(0xf5e6c8, 1);
+  g.fillRect(cx - 8, cy - 7, 16, 11);
+  g.lineStyle(1, 0x4a3728, 1);
+  g.strokeRect(cx - 8, cy - 7, 16, 11);
+  g.fillStyle(0x2d5016, 1);
+  if (marker.direction === "north") {
+    g.fillTriangle(cx, cy - 9, cx - 4, cy - 4, cx + 4, cy - 4);
+  } else {
+    g.fillTriangle(cx, cy - 1, cx - 4, cy - 6, cx + 4, cy - 6);
+  }
+
+  const objects: Phaser.GameObjects.GameObject[] = [glow, glowRing, g];
+  if (marker.label) {
+    const label = scene.add
+      .text(cx, cy - 3, marker.label, {
+        fontFamily: "monospace",
+        fontSize: "6px",
+        color: "#1a3010",
+      })
+      .setOrigin(0.5)
+      .setDepth(depth + 1);
+    objects.push(label);
+  }
+  return objects;
 }
 
 function nameTagText(name: string, inBattle?: boolean) {
@@ -294,6 +344,10 @@ export class OverworldScene extends Phaser.Scene {
       }
     }
     for (const npc of npcsOnMap(this.mapData.id)) this.spawnNpc(npc);
+    for (const warp of this.mapData.warps) {
+      const markerObjects = spawnRouteWarpMarker(this, warp, this.mapData.tileSize);
+      if (markerObjects) this.mapObjects.push(...markerObjects);
+    }
   }
 
   private spawnNpc(npc: MapNpc) {
