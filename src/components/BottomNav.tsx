@@ -1,13 +1,13 @@
 import React from "react";
 
-export default function BottomNav({ onTeam, onMap, onMenu }: { onTeam: () => void; onMap: () => void; onMenu: () => void }) {
+export default function BottomNav({ onTeam, onMap, onMenu, className }: { onTeam: () => void; onMap: () => void; onMenu: () => void; className?: string }) {
   const items = [
     { label: "Team", icon: "👥", onClick: onTeam },
     { label: "Map", icon: "🗺", onClick: onMap },
     { label: "Menu", icon: "☰", onClick: onMenu },
   ];
   return (
-    <div className="app-bottom-nav safe-area-bottom">
+    <div className={`app-bottom-nav safe-area-bottom ${className ?? ""}`}>
       {items.map(({ label, icon, onClick }) => (
         <button
           key={label}

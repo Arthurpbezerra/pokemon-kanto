@@ -319,6 +319,586 @@ body {
   position: relative;
 }
 
+/* GBA game viewport (240×160) + narrow room chat sidebar */
+.pallet-play-row {
+  --gba-screen-height: clamp(200px, 52vh, 400px);
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+  gap: 10px;
+  justify-content: flex-start;
+}
+
+.pallet-game-panel {
+  flex: 0 0 auto;
+}
+
+.gba-screen-panel {
+  --gba-screen-height: clamp(200px, 52vh, 400px);
+  width: calc(var(--gba-screen-height) * 1.5);
+  height: var(--gba-screen-height);
+  max-width: 100%;
+  border: 2px solid rgba(251, 191, 36, 0.55);
+  border-radius: 8px;
+  background: #0f172a;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.04);
+}
+
+.gba-screen-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 8px;
+  background: linear-gradient(180deg, #1e293b 0%, #0f172a 100%);
+  border-bottom: 1px solid rgba(251, 191, 36, 0.35);
+  flex-shrink: 0;
+}
+
+.gba-screen-title {
+  font-size: 10px;
+  font-weight: 700;
+  color: #fde68a;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gba-screen-hint {
+  font-size: 9px;
+  color: #94a3b8;
+  flex-shrink: 0;
+}
+
+.gba-screen-body {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  background: #020617;
+}
+
+.gba-screen-body--game {
+  overflow: hidden;
+}
+
+.gba-screen-body--bare {
+  flex: 1;
+  min-height: 0;
+  height: auto;
+}
+
+.gba-screen-canvas {
+  width: 100%;
+  height: 100%;
+}
+
+.gba-screen-canvas canvas {
+  display: block;
+  margin: 0 auto;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+
+/* Narrow chat column (not full GBA aspect) */
+.room-chat-sidebar {
+  --chat-height: var(--gba-screen-height, clamp(200px, 52vh, 400px));
+  width: clamp(140px, 16vw, 200px);
+  min-width: 140px;
+  height: var(--chat-height);
+  border: 2px solid rgba(251, 191, 36, 0.4);
+  border-radius: 8px;
+  background: #141428;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.room-chat-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 5px 8px;
+  background: linear-gradient(180deg, #1e293b 0%, #0f172a 100%);
+  border-bottom: 1px solid rgba(251, 191, 36, 0.3);
+  flex-shrink: 0;
+}
+
+.room-chat-title {
+  font-size: 9px;
+  font-weight: 700;
+  color: #fde68a;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.room-chat-close {
+  font-size: 10px !important;
+  padding: 4px 8px !important;
+  min-height: auto !important;
+  line-height: 1;
+}
+
+.room-chat-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 6px;
+  gap: 6px;
+  background: #1a1a2e;
+}
+
+.room-chat-messages {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  font-family: "Press Start 2P", monospace;
+  font-size: 7px;
+  line-height: 1.55;
+  color: #e2e8f0;
+}
+
+.room-chat-empty {
+  font-size: 7px;
+  color: #94a3b8;
+  padding: 4px;
+}
+
+.room-chat-line {
+  margin-bottom: 4px;
+  word-break: break-word;
+}
+
+.room-chat-line--self .room-chat-name {
+  color: #fde68a;
+}
+
+.room-chat-name {
+  color: #7dd3fc;
+  margin-right: 4px;
+}
+
+.room-chat-text {
+  color: #f1f5f9;
+}
+
+.room-chat-form {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.room-chat-input {
+  flex: 1;
+  min-width: 0;
+  font-family: "Press Start 2P", monospace;
+  font-size: 7px;
+  padding: 6px 6px;
+  background: #0f172a;
+  border: 2px solid rgba(251, 191, 36, 0.35);
+  border-radius: 4px;
+  color: #f8fafc;
+}
+
+.room-chat-input:focus {
+  outline: none;
+  border-color: rgba(251, 191, 36, 0.7);
+}
+
+.room-chat-input:disabled {
+  opacity: 0.5;
+}
+
+.room-chat-send {
+  font-size: 7px !important;
+  padding: 6px 6px !important;
+  flex-shrink: 0;
+}
+
+/* Mobile chat drawer */
+.room-chat-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 58;
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.room-chat-drawer {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 59;
+  max-height: 42vh;
+  border: 2px solid rgba(251, 191, 36, 0.5);
+  border-bottom: none;
+  border-radius: 12px 12px 0 0;
+  background: #141428;
+  display: flex;
+  flex-direction: column;
+  padding-bottom: env(safe-area-inset-bottom);
+  box-shadow: 0 -8px 32px rgba(0, 0, 0, 0.5);
+}
+
+.room-chat-drawer .room-chat-body {
+  min-height: 120px;
+}
+
+.room-chat-drawer .room-chat-messages {
+  font-size: 8px;
+}
+
+.room-chat-drawer .room-chat-input {
+  font-size: 8px;
+}
+
+/* Mobile chat sheet (above pad) */
+.room-chat-sheet {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: clamp(180px, 38dvh, 280px);
+  z-index: 59;
+  max-height: min(45dvh, 360px);
+  border: 2px solid rgba(251, 191, 36, 0.5);
+  border-radius: 12px 12px 0 0;
+  background: #141428;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 -8px 32px rgba(0, 0, 0, 0.5);
+  transition: bottom 0.15s ease-out;
+}
+
+.room-chat-backdrop--sheet {
+  z-index: 58;
+}
+
+.room-chat-peek-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 4px 8px;
+  margin: 0;
+  border: none;
+  background: rgba(15, 23, 42, 0.92);
+  border-top: 1px solid rgba(251, 191, 36, 0.25);
+  text-align: left;
+  cursor: pointer;
+  font-family: "Press Start 2P", monospace;
+  font-size: 7px;
+  line-height: 1.4;
+  color: #e2e8f0;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.room-chat-peek-name {
+  color: #7dd3fc;
+  flex-shrink: 0;
+}
+
+.room-chat-peek-text {
+  color: #cbd5e1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+/* GBA SP emulator-style mobile shell */
+.pallet-map-mobile-root {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  background: #d4d4da;
+  overflow: hidden;
+}
+
+.gba-sp-shell {
+  --gba-sp-chrome: 32px;
+  --gba-sp-pad-budget: clamp(180px, 38dvh, 280px);
+  --gba-sp-pad-budget-tablet: clamp(200px, 32dvh, 280px);
+  --gba-sp-side-pad: 8px;
+  --gba-sp-available-h: calc(
+    100dvh - var(--gba-sp-chrome) - var(--gba-sp-pad-budget) -
+    env(safe-area-inset-top) - env(safe-area-inset-bottom) - 8px
+  );
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+  max-height: 100dvh;
+  width: 100%;
+  background: linear-gradient(180deg, #ececf0 0%, #d0d0d8 100%);
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+.gba-sp-chrome {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 12px;
+  min-height: var(--gba-sp-chrome);
+  background: #0f172a;
+  border-bottom: 1px solid rgba(251, 191, 36, 0.35);
+  flex-shrink: 0;
+}
+
+.gba-sp-chrome-title {
+  font-size: 10px;
+  font-weight: 700;
+  color: #fde68a;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.gba-sp-chat-chip {
+  flex-shrink: 0;
+  font-family: "Press Start 2P", monospace;
+  font-size: 8px;
+  padding: 4px 10px;
+  border: 2px solid rgba(251, 191, 36, 0.55);
+  border-radius: 4px;
+  background: #1e293b;
+  color: #fde68a;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.gba-sp-chat-chip:active {
+  filter: brightness(0.9);
+}
+
+.gba-sp-play-column {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 2px var(--gba-sp-side-pad) 0;
+  gap: 0;
+}
+
+.gba-sp-screen-stage {
+  width: 100%;
+  flex: 0 1 auto;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.gba-sp-screen-frame {
+  width: min(100%, calc(var(--gba-sp-available-h) * 240 / 160));
+  aspect-ratio: 240 / 160;
+  max-height: var(--gba-sp-available-h);
+  margin: 0 auto;
+  background: #020617;
+  border: 3px solid #1a1a28;
+  border-radius: 2px;
+  overflow: hidden;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+}
+
+.gba-sp-screen-frame .gba-screen-body--bare {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
+
+.gba-sp-screen-frame .gba-screen-canvas {
+  width: 100%;
+  height: 100%;
+}
+
+.gba-sp-screen-frame .gba-screen-canvas canvas {
+  width: 100% !important;
+  height: 100% !important;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+
+.gba-sp-chat-peek {
+  width: min(100%, calc(var(--gba-sp-available-h) * 240 / 160));
+  flex-shrink: 0;
+}
+
+.gba-sp-deck-stage {
+  flex-shrink: 0;
+  height: var(--gba-sp-pad-budget);
+  min-height: var(--gba-sp-pad-budget);
+  max-height: var(--gba-sp-pad-budget);
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
+  background: #e8e8ec;
+  overflow: hidden;
+}
+
+.gba-sp-deck {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.gba-sp-deck-art {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  object-position: center bottom;
+  display: block;
+  pointer-events: none;
+  user-select: none;
+}
+
+.gba-sp-deck-overlay {
+  position: absolute;
+  inset: 0;
+}
+
+.gba-sp-hit {
+  position: absolute;
+  border: none;
+  background: transparent;
+  touch-action: none;
+  -webkit-tap-highlight-color: transparent;
+  cursor: pointer;
+}
+
+.gba-sp-hit:active {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+.gba-sp-hit--debug {
+  background: rgba(239, 68, 68, 0.25);
+  outline: 1px dashed rgba(239, 68, 68, 0.6);
+}
+
+.gba-sp-hit-label {
+  font-size: 10px;
+  font-weight: 700;
+  color: rgba(30, 30, 40, 0.25);
+  pointer-events: none;
+}
+
+/* Hit zones calibrated for object-fit:contain deck art */
+.gba-sp-hit--l {
+  left: 4%;
+  top: 4%;
+  width: 13%;
+  height: 12%;
+}
+
+.gba-sp-hit--r {
+  right: 4%;
+  top: 4%;
+  width: 13%;
+  height: 12%;
+}
+
+.gba-sp-hit--menu {
+  left: 40%;
+  top: 2%;
+  width: 20%;
+  height: 10%;
+}
+
+.gba-sp-hit--dpad {
+  left: 8%;
+  top: 26%;
+  width: 30%;
+  height: 40%;
+}
+
+.gba-sp-hit--b {
+  left: 54%;
+  top: 40%;
+  width: 15%;
+  height: 22%;
+}
+
+.gba-sp-hit--a {
+  left: 70%;
+  top: 26%;
+  width: 15%;
+  height: 22%;
+}
+
+.gba-sp-hit--select {
+  left: 30%;
+  top: 70%;
+  width: 18%;
+  height: 14%;
+}
+
+.gba-sp-hit--start {
+  left: 54%;
+  top: 70%;
+  width: 18%;
+  height: 14%;
+}
+
+/* Tablet portrait: cap pad height */
+@media (min-width: 481px) and (max-width: 768px) {
+  .gba-sp-shell {
+    --gba-sp-pad-budget: var(--gba-sp-pad-budget-tablet);
+    --gba-sp-available-h: calc(
+      100dvh - var(--gba-sp-chrome) - var(--gba-sp-pad-budget-tablet) -
+      env(safe-area-inset-top) - env(safe-area-inset-bottom) - 8px
+    );
+  }
+
+  .gba-sp-deck-stage {
+    height: var(--gba-sp-pad-budget-tablet);
+    min-height: var(--gba-sp-pad-budget-tablet);
+    max-height: var(--gba-sp-pad-budget-tablet);
+  }
+
+  .room-chat-sheet {
+    bottom: clamp(200px, 32dvh, 280px);
+  }
+}
+
+/* Small phones */
+@media (max-width: 380px) {
+  .gba-sp-shell {
+    --gba-sp-pad-budget: clamp(160px, 36dvh, 220px);
+    --gba-sp-side-pad: 4px;
+    --gba-sp-available-h: calc(
+      100dvh - var(--gba-sp-chrome) - clamp(160px, 36dvh, 220px) -
+      env(safe-area-inset-top) - env(safe-area-inset-bottom) - 8px
+    );
+  }
+
+  .gba-sp-deck-stage {
+    height: clamp(160px, 36dvh, 220px);
+    min-height: clamp(160px, 36dvh, 220px);
+    max-height: clamp(160px, 36dvh, 220px);
+  }
+
+  .room-chat-sheet {
+    bottom: clamp(160px, 36dvh, 220px);
+  }
+}
+
 .phaser-world-shell {
   width: 100%;
   height: 64vh;
@@ -330,143 +910,24 @@ body {
   background: #020617;
 }
 
-.gba-pad,
-.gba-pad {
-  display: none;
+/* Mobile SP shell only — not narrow desktop browsers with a mouse */
+html[data-map-layout="sp"] .app-map-view {
+  padding: 0;
+  min-height: 100dvh;
+  height: 100dvh;
+  overflow: hidden;
+  background: #ececf0;
 }
 
-.gba-dpad {
-  position: relative;
-  width: 148px;
-  height: 148px;
-  touch-action: none;
-  user-select: none;
-  -webkit-user-select: none;
+html[data-map-layout="sp"] .app-map-view .app-site-header,
+html[data-map-layout="sp"] .app-map-view .app-above-map,
+html[data-map-layout="sp"] .app-map-view .app-bottom-nav-desktop {
+  display: none !important;
 }
 
-.gba-dpad-n,
-.gba-dpad-s,
-.gba-dpad-w,
-.gba-dpad-e,
-.gba-dpad-c {
-  position: absolute;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(40, 40, 55, 0.82);
-  border: 2px solid rgba(251, 191, 36, 0.55);
-  color: #fde68a;
-  pointer-events: none;
-  font-size: 14px;
-}
-
-.gba-dpad-n,
-.gba-dpad-s {
-  left: 52px;
-  width: 44px;
-  height: 52px;
-}
-
-.gba-dpad-n { top: 0; border-radius: 8px 8px 4px 4px; }
-.gba-dpad-s { bottom: 0; border-radius: 4px 4px 8px 8px; }
-
-.gba-dpad-w,
-.gba-dpad-e {
-  top: 52px;
-  width: 52px;
-  height: 44px;
-}
-
-.gba-dpad-w { left: 0; border-radius: 8px 4px 4px 8px; }
-.gba-dpad-e { right: 0; border-radius: 4px 8px 8px 4px; }
-
-.gba-dpad-c {
-  left: 56px;
-  top: 56px;
-  width: 36px;
-  height: 36px;
-  border-radius: 8px;
-  background: rgba(28, 28, 40, 0.9);
-}
-
-.gba-face {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-}
-
-.gba-btn {
-  width: 62px;
-  height: 62px;
-  border-radius: 999px;
-  border: 3px solid rgba(251, 191, 36, 0.7);
-  color: #1a1a2e;
-  font-family: "Press Start 2P", monospace;
-  font-size: 12px;
-  touch-action: none;
-  user-select: none;
-  -webkit-user-select: none;
-}
-
-.gba-btn-a {
-  background: #ef4444;
-  transform: translateY(-8px);
-}
-
-.gba-btn-b {
-  background: #f59e0b;
-  transform: translateY(12px);
-}
-
-.gba-btn {
-  width: 62px;
-  height: 62px;
-  border-radius: 999px;
-  border: 3px solid rgba(251, 191, 36, 0.7);
-  color: #1a1a2e;
-  font-family: "Press Start 2P", monospace;
-  font-size: 12px;
-  touch-action: none;
-  user-select: none;
-  -webkit-user-select: none;
-}
-.gba-btn-a { background: #ef4444; transform: translateY(-8px); }
-.gba-btn-b { background: #f59e0b; transform: translateY(12px); }
-
-.gba-btn:active {
-  filter: brightness(0.85);
-}
-
-.phaser-world-wrap { position: relative; }
-.gba-pad { display: none; }
-
-@media (max-width: 768px), (pointer: coarse) {
-  .phaser-world-shell,
-  .phaser-world-shell {
-    height: 48vh;
-    min-height: 42vh;
-    max-height: 52vh;
-  }
-  .gba-pad,
-  .gba-pad {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-end;
-    position: absolute;
-    left: 0;
-    right: 0;
-    bottom: 8px;
-    padding: 0 10px;
-    padding-bottom: max(8px, env(safe-area-inset-bottom));
-    pointer-events: none;
-    z-index: 5;
-  }
-  .gba-dpad,
-  .gba-dpad,
-  .gba-face,
-  .gba-face {
-    pointer-events: auto;
-  }
+html[data-map-layout="sp"] .app-map-view .main-with-nav {
+  padding: 0;
+  height: 100%;
 }
 
 @media (max-width: 640px) {
@@ -482,24 +943,6 @@ body {
     height: 48vh;
     min-height: 42vh;
     max-height: 52vh;
-  }
-  .gba-pad,
-  .gba-pad {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-end;
-    position: absolute;
-    left: 0;
-    right: 0;
-    bottom: 8px;
-    padding: 0 10px;
-    padding-bottom: env(safe-area-inset-bottom);
-    pointer-events: none;
-    z-index: 5;
-  }
-  .gba-dpad,
-  .gba-face {
-    pointer-events: auto;
   }
 }
 

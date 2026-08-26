@@ -14,6 +14,7 @@ const NUM_PRIMARY_TILES = 640;
 const NUM_PRIMARY_METATILES = 640;
 const TILE = 16;
 const WATER = new Set([0x10, 0x11, 0x12, 0x13, 0x15, 0x16, 0x17, 0x1a, 0x1b]);
+const ENCOUNTER_GRASS = new Set([0x02]); // MB_TALL_GRASS
 
 function fail(message) {
   throw new Error(`[build-firered-maps] ${message}`);
@@ -205,9 +206,11 @@ function renderMap(spec) {
   const ground = Buffer.alloc(w * h * 4);
   const overlay = Buffer.alloc(w * h * 4);
   const rows = [];
+  const grassRows = [];
 
   for (let y = 0; y < height; y++) {
     let row = "";
+    let grassRow = "";
     for (let x = 0; x < width; x++) {
       const cell = map.readUInt16LE((y * width + x) * 2);
       const metaId = cell & 0x3ff;
@@ -215,6 +218,7 @@ function renderMap(spec) {
       const { set, local } = resolveSet(metaId, primary, secondary);
       if (local < 0 || local >= set.metaCount) {
         row += "#";
+        grassRow += "#";
         continue;
       }
       const tiles = getMetaTiles(set, local);
@@ -226,14 +230,20 @@ function renderMap(spec) {
       if (lt === 0) drawQuad(ground, w, ox, oy, tiles.slice(4, 8), primary, secondary);
       else drawQuad(overlay, w, ox, oy, tiles.slice(4, 8), primary, secondary);
       row += col !== 0 || WATER.has(bh) ? "#" : ".";
+      if (row[row.length - 1] === "#") grassRow += "#";
+      else grassRow += ENCOUNTER_GRASS.has(bh) ? "G" : ".";
     }
     rows.push(row);
+    grassRows.push(grassRow);
   }
 
   for (const [x, y, ch] of spec.extras?.cells || []) {
     const r = rows[y].split("");
     r[x] = ch;
     rows[y] = r.join("");
+    const g = grassRows[y].split("");
+    g[x] = ch === "#" ? "#" : g[x];
+    grassRows[y] = g.join("");
   }
 
   return {
@@ -243,6 +253,7 @@ function renderMap(spec) {
     width,
     height,
     rows,
+    grassRows,
   };
 }
 
@@ -256,6 +267,7 @@ const building = loadTileset("primary", "building");
 const house1 = loadTileset("secondary", "generic_building_1");
 const house2 = loadTileset("secondary", "generic_building_2");
 const labTs = loadTileset("secondary", "lab");
+const viridianForestTs = loadTileset("secondary", "viridian_forest");
 
 const maps = [
   {
@@ -310,6 +322,24 @@ const maps = [
     primary: building,
     secondary: labTs,
   },
+  {
+    id: "viridian_forest",
+    layout: "ViridianForest",
+    width: 54,
+    height: 69,
+    primary: general,
+    secondary: viridianForestTs,
+    extras: {
+      cells: [
+        [28, 61, "."],
+        [29, 61, "."],
+        [30, 61, "."],
+        [28, 62, "."],
+        [29, 62, "."],
+        [30, 62, "."],
+      ],
+    },
+  },
 ];
 
 const renderedMaps = maps.map((spec) => renderMap(spec));
@@ -321,7 +351,12 @@ for (const rendered of renderedMaps) {
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, "ground.png"), rendered.groundPng);
   writeFileSync(join(dir, "overlay.png"), rendered.overlayPng);
-  collision[rendered.id] = { width: rendered.width, height: rendered.height, rows: rendered.rows };
+  collision[rendered.id] = {
+    width: rendered.width,
+    height: rendered.height,
+    rows: rendered.rows,
+    grassRows: rendered.grassRows,
+  };
   console.log("wrote", rendered.id, rendered.width, "x", rendered.height);
 }
 

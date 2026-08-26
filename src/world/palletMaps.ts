@@ -29,11 +29,31 @@ export type MapNpc = {
   facing?: Direction;
   text: string;
   heal?: boolean;
+  warpTo?: {
+    toMapId: string;
+    toX: number;
+    toY: number;
+    toLocation: string;
+  };
 };
 
 function collisionFor(id: keyof typeof collision) {
   return collision[id];
 }
+
+function grassFor(id: keyof typeof collision) {
+  return collision[id].grassRows;
+}
+
+const INTERIOR_VIEW = {
+  viewportMode: "fit" as const,
+  letterboxColor: "#2a2030",
+};
+
+const LAB_VIEW = {
+  viewportMode: "fit" as const,
+  letterboxColor: "#3d4a5c",
+};
 
 /** Pallet Town maps baked from pret tilesets (ground + roof overlay). */
 export const PALLET_MAPS: Record<string, OverworldMapDef> = {
@@ -41,6 +61,7 @@ export const PALLET_MAPS: Record<string, OverworldMapDef> = {
     id: "pallet_town",
     locationName: "Pallet Town",
     ...frMap("pallet_town"),
+    viewportMode: "follow",
     widthTiles: 24,
     heightTiles: 20,
     tileSize: TILE_SIZE,
@@ -52,6 +73,7 @@ export const PALLET_MAPS: Record<string, OverworldMapDef> = {
       { x: 6, y: 7, w: 1, h: 1, toMapId: "pallet_player_house_1f", toX: 4, toY: 8, toLocation: "Pallet Town" },
       { x: 15, y: 7, w: 1, h: 1, toMapId: "pallet_rival_house_1f", toX: 4, toY: 8, toLocation: "Pallet Town" },
       { x: 16, y: 13, w: 1, h: 1, toMapId: "pallet_oak_lab", toX: 6, toY: 12, toLocation: "Pallet Town" },
+      { x: 10, y: 14, w: 1, h: 1, toMapId: "viridian_forest", toX: 29, toY: 60, toLocation: "Viridian Forest" },
     ],
     triggers: [],
   },
@@ -59,6 +81,7 @@ export const PALLET_MAPS: Record<string, OverworldMapDef> = {
     id: "pallet_player_house_1f",
     locationName: "Pallet Town",
     ...frMap("pallet_player_house_1f"),
+    ...INTERIOR_VIEW,
     widthTiles: 13,
     heightTiles: 10,
     tileSize: TILE_SIZE,
@@ -76,6 +99,7 @@ export const PALLET_MAPS: Record<string, OverworldMapDef> = {
     id: "pallet_player_house_2f",
     locationName: "Pallet Town",
     ...frMap("pallet_player_house_2f"),
+    ...INTERIOR_VIEW,
     widthTiles: 12,
     heightTiles: 9,
     tileSize: TILE_SIZE,
@@ -90,6 +114,7 @@ export const PALLET_MAPS: Record<string, OverworldMapDef> = {
     id: "pallet_rival_house_1f",
     locationName: "Pallet Town",
     ...frMap("pallet_rival_house_1f"),
+    ...INTERIOR_VIEW,
     widthTiles: 13,
     heightTiles: 10,
     tileSize: TILE_SIZE,
@@ -104,6 +129,7 @@ export const PALLET_MAPS: Record<string, OverworldMapDef> = {
     id: "pallet_oak_lab",
     locationName: "Pallet Town",
     ...frMap("pallet_oak_lab"),
+    ...LAB_VIEW,
     widthTiles: 13,
     heightTiles: 14,
     tileSize: TILE_SIZE,
@@ -112,6 +138,25 @@ export const PALLET_MAPS: Record<string, OverworldMapDef> = {
     collisionRows: collisionFor("pallet_oak_lab").rows,
     encounterZones: [],
     warps: [{ x: 5, y: 12, w: 3, h: 1, toMapId: "pallet_town", toX: 16, toY: 14, toLocation: "Pallet Town" }],
+    triggers: [],
+  },
+  viridian_forest: {
+    id: "viridian_forest",
+    locationName: "Viridian Forest",
+    ...frMap("viridian_forest"),
+    viewportMode: "follow",
+    widthTiles: 54,
+    heightTiles: 69,
+    tileSize: TILE_SIZE,
+    spawn: { x: 29, y: 60 },
+    blockedRects: [],
+    collisionRows: collisionFor("viridian_forest").rows,
+    grassRows: grassFor("viridian_forest"),
+    encounterChanceBase: 32,
+    encounterZones: [],
+    warps: [
+      { x: 29, y: 61, w: 1, h: 1, toMapId: "pallet_town", toX: 10, toY: 15, toLocation: "Pallet Town" },
+    ],
     triggers: [],
   },
 };
@@ -270,6 +315,14 @@ export function getEncounterZone(map: OverworldMapDef, x: number, y: number): En
     map.encounterZones.find((z) => x >= z.area.x && x < z.area.x + z.area.w && y >= z.area.y && y < z.area.y + z.area.h) ??
     null
   );
+}
+
+/** Tall-grass tiles from baked metatile behaviors (MB_TALL_GRASS). */
+export function isGrassEncounterTile(map: OverworldMapDef, x: number, y: number): boolean {
+  const grass = map.grassRows;
+  if (!grass) return Boolean(getEncounterZone(map, x, y));
+  if (x < 0 || y < 0 || y >= grass.length || x >= grass[y].length) return false;
+  return grass[y][x] === "G";
 }
 
 export function npcsOnMap(mapId: string): MapNpc[] {

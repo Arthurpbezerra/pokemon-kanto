@@ -16,6 +16,7 @@ const layouts = [
   "PalletTown_PlayersHouse_2F",
   "PalletTown_RivalsHouse",
   "PalletTown_ProfessorOaksLab",
+  "ViridianForest",
 ];
 
 const tilesets = [
@@ -25,6 +26,7 @@ const tilesets = [
   ["secondary", "generic_building_1"],
   ["secondary", "generic_building_2"],
   ["secondary", "lab"],
+  ["secondary", "viridian_forest"],
 ];
 
 const maps = [
@@ -33,6 +35,7 @@ const maps = [
   "PalletTown_PlayersHouse_2F",
   "PalletTown_RivalsHouse",
   "PalletTown_ProfessorOaksLab",
+  "ViridianForest",
 ];
 
 const sprites = [

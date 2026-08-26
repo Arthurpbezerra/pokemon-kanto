@@ -17,6 +17,7 @@ const MAPS = [
   { id: "pallet_player_house_2f", width: 12, height: 9 },
   { id: "pallet_rival_house_1f", width: 13, height: 10 },
   { id: "pallet_oak_lab", width: 13, height: 14 },
+  { id: "viridian_forest", width: 54, height: 69 },
 ];
 
 function fail(message) {

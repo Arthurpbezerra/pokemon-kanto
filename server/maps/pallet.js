@@ -16,6 +16,7 @@ export const PALLET_MAPS = {
       { x: 6, y: 7, w: 1, h: 1, toMapId: "pallet_player_house_1f", toX: 4, toY: 8 },
       { x: 15, y: 7, w: 1, h: 1, toMapId: "pallet_rival_house_1f", toX: 4, toY: 8 },
       { x: 16, y: 13, w: 1, h: 1, toMapId: "pallet_oak_lab", toX: 6, toY: 12 },
+      { x: 10, y: 14, w: 1, h: 1, toMapId: "viridian_forest", toX: 29, toY: 60 },
     ],
   },
   pallet_player_house_1f: {
@@ -52,6 +53,14 @@ export const PALLET_MAPS = {
     spawn: { x: 6, y: 12 },
     collisionRows: collision.pallet_oak_lab.rows,
     warps: [{ x: 5, y: 12, w: 3, h: 1, toMapId: "pallet_town", toX: 16, toY: 14 }],
+  },
+  viridian_forest: {
+    id: "viridian_forest",
+    widthTiles: 54,
+    heightTiles: 69,
+    spawn: { x: 29, y: 60 },
+    collisionRows: collision.viridian_forest.rows,
+    warps: [{ x: 29, y: 61, w: 1, h: 1, toMapId: "pallet_town", toX: 10, toY: 15 }],
   },
 };
 

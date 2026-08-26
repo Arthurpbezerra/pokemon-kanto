@@ -39,7 +39,15 @@ const COLORS = [
 const MAX_PLAYERS = 10;
 const VALID_FACINGS = new Set(["up", "down", "left", "right"]);
 const rooms = new Map();
+const roomChats = new Map();
 const roomExpireTimers = new Map();
+const MAX_CHAT_MESSAGES = 100;
+const MAX_CHAT_LENGTH = 120;
+
+function getRoomChat(roomCode) {
+  if (!roomChats.has(roomCode)) roomChats.set(roomCode, []);
+  return roomChats.get(roomCode);
+}
 
 function migratePlayerWorld(player) {
   const next = { ...player };
@@ -74,6 +82,7 @@ function scheduleRoomExpire(roomCode) {
   const t = setTimeout(() => {
     roomExpireTimers.delete(roomCode);
     rooms.delete(roomCode);
+    roomChats.delete(roomCode);
     persistRooms(); // update file to remove expired room
   }, ROOM_EXPIRE_MS);
   roomExpireTimers.set(roomCode, t);
@@ -153,6 +162,7 @@ io.on("connection", (socket) => {
     socket.roomCode = code;
 
     socket.emit("roomCreated", { roomCode: code, state });
+    socket.emit("roomChatHistory", getRoomChat(code));
   });
 
   socket.on("joinRoom", ({ code, playerName }) => {
@@ -179,6 +189,7 @@ io.on("connection", (socket) => {
       socket.join(roomCode);
       socket.roomCode = roomCode;
       io.to(roomCode).emit("state", state);
+      socket.emit("roomChatHistory", getRoomChat(roomCode));
       return;
     }
     if (state.players.length >= MAX_PLAYERS) {
@@ -214,6 +225,28 @@ io.on("connection", (socket) => {
     socket.roomCode = roomCode;
 
     io.to(roomCode).emit("state", state);
+    socket.emit("roomChatHistory", getRoomChat(roomCode));
+  });
+
+  socket.on("chatMessage", (text) => {
+    const roomCode = socket.roomCode;
+    if (!roomCode || !rooms.has(roomCode)) return;
+    const state = rooms.get(roomCode);
+    const player = state.players.find((p) => p.id === socket.id);
+    if (!player) return;
+    const message = String(text ?? "").trim().slice(0, MAX_CHAT_LENGTH);
+    if (!message) return;
+    const entry = {
+      id: `${Date.now()}-${socket.id}`,
+      playerId: socket.id,
+      playerName: player.name,
+      text: message,
+      ts: Date.now(),
+    };
+    const chat = getRoomChat(roomCode);
+    chat.push(entry);
+    if (chat.length > MAX_CHAT_MESSAGES) chat.splice(0, chat.length - MAX_CHAT_MESSAGES);
+    io.to(roomCode).emit("roomChatMessage", entry);
   });
 
   socket.on("stateUpdate", (state) => {

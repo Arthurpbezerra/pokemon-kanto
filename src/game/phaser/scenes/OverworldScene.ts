@@ -4,8 +4,10 @@ import {
   PALLET_MAPS,
   facingTile,
   findNpcForInteract,
+  getEncounterZone,
   getPalletMap,
   getWarpAt,
+  isGrassEncounterTile,
   isBlockedTile,
   npcsOnMap,
   type MapNpc,
@@ -63,7 +65,6 @@ type RemoteActor = {
 const STEP_MS = 110;
 const DEPTH_GROUND = 0;
 const DEPTH_SORT = 20;
-const DEPTH_UI = 100;
 
 function tileCenter(tile: number, tileSize: number) {
   return tile * tileSize + tileSize / 2;
@@ -246,7 +247,6 @@ export class OverworldScene extends Phaser.Scene {
         this.cameras.main.setBounds(0, 0, worldWidth, worldHeight);
         this.createOrReplaceLocalPlayer();
         this.positionLocalActor(spawn.x, spawn.y);
-        if (this.player) this.cameras.main.startFollow(this.player, true, 1, 1);
         this.applyCameraZoom();
         this.syncRemotePlayers(this.bridgeState.nearbyPlayers);
         this.showStatus("");
@@ -294,17 +294,6 @@ export class OverworldScene extends Phaser.Scene {
       }
     }
     for (const npc of npcsOnMap(this.mapData.id)) this.spawnNpc(npc);
-    const title = this.add
-      .text(8, 8, this.mapData.locationName, {
-        fontFamily: "monospace",
-        fontSize: "8px",
-        color: "#fff4cc",
-        backgroundColor: "#24324acc",
-        padding: { x: 4, y: 3 },
-      })
-      .setScrollFactor(0)
-      .setDepth(DEPTH_UI);
-    this.mapObjects.push(title);
   }
 
   private spawnNpc(npc: MapNpc) {
@@ -347,12 +336,31 @@ export class OverworldScene extends Phaser.Scene {
   }
 
   private applyCameraZoom() {
+    const cam = this.cameras.main;
     const viewWidth = Math.max(1, this.scale.width);
     const viewHeight = Math.max(1, this.scale.height);
+    const mapPixelW = this.mapData.widthTiles * this.mapData.tileSize;
+    const mapPixelH = this.mapData.heightTiles * this.mapData.tileSize;
+    const defaultBg = "#0b1024";
+
+    if (this.mapData.viewportMode === "fit") {
+      const letterbox = this.mapData.letterboxColor ?? defaultBg;
+      const zoom = Math.min(viewWidth / mapPixelW, viewHeight / mapPixelH);
+      cam.setZoom(zoom);
+      cam.stopFollow();
+      cam.centerOn(mapPixelW / 2, mapPixelH / 2);
+      cam.setBackgroundColor(letterbox);
+      this.game.canvas.style.backgroundColor = letterbox;
+      return;
+    }
+
+    cam.setBackgroundColor(defaultBg);
+    this.game.canvas.style.backgroundColor = defaultBg;
     const targetWidth = this.cameraTilesW * this.mapData.tileSize;
     const targetHeight = this.cameraTilesH * this.mapData.tileSize;
-    const targetZoom = Math.max(2, Math.floor(Math.min(viewWidth / targetWidth, viewHeight / targetHeight)));
-    this.cameras.main.setZoom(targetZoom);
+    const zoom = Math.min(viewWidth / targetWidth, viewHeight / targetHeight);
+    cam.setZoom(zoom);
+    if (this.player) cam.startFollow(this.player, true, 1, 1);
   }
 
   private occupiedTiles(): { x: number; y: number }[] {
@@ -524,6 +532,12 @@ export class OverworldScene extends Phaser.Scene {
         this.loadMap(warp.toMapId, dest);
         this.callbacks.onTravel?.(warp.toLocation, dest, nextTile);
         return;
+      }
+      if (this.bridgeState.canEncounter && isGrassEncounterTile(this.mapData, nextX, nextY)) {
+        const chance = this.mapData.encounterChanceBase ?? 32;
+        if (Math.random() * 256 < chance) {
+          this.callbacks.onSearchWild?.();
+        }
       }
       this.callbacks.onUpdateTilePos?.(this.bridgeState.playerId, nextTile, this.facing, false);
     };

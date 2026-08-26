@@ -11,6 +11,7 @@ import AchievementToast, { type AchievementData } from "./components/Achievement
 import KantoMapView from "./components/KantoMapView";
 import SecretGigiEvent, { clearGigiEventStorage } from "./components/SecretGigiEvent";
 import PalletMapScreen from "./components/PalletMapScreen";
+import type { RoomChatMessage } from "./components/RoomChat";
 import { isSecretGigiName, EEVEE_ID } from "./secret-gigi.config";
 import {
   PLAYER_SPRITE_PRESETS,
@@ -341,6 +342,7 @@ function useGameState(socket: Socket | null) {
   const [pvpBattle, setPvpBattle] = useState<PvpBattle | null>(null);
   const [pvpTrade, setPvpTrade] = useState<PvpTrade | null>(null);
   const [pendingReplaceCapture, setPendingReplaceCapture] = useState<null | { pokemon: Pokemon; playerIndex: number }>(null);
+  const [roomChatMessages, setRoomChatMessages] = useState<RoomChatMessage[]>([]);
   const pendingLevelUpsRef = useRef<Array<{ playerIdx: number; teamIndex: number; newLevel: number; monId: number; currentMoves: string[] }>>([]);
   const skipEmitRef = useRef(false);
   const skipEmitAfterPvpAcceptRef = useRef(false);
@@ -546,12 +548,23 @@ function useGameState(socket: Socket | null) {
       );
     };
     socket.on("moveRejected", onMoveRejected);
+    const onRoomChatHistory = (messages: RoomChatMessage[]) => {
+      setRoomChatMessages(Array.isArray(messages) ? messages : []);
+    };
+    const onRoomChatMessage = (message: RoomChatMessage) => {
+      if (!message?.id) return;
+      setRoomChatMessages((prev) => [...prev, message]);
+    };
+    socket.on("roomChatHistory", onRoomChatHistory);
+    socket.on("roomChatMessage", onRoomChatMessage);
     return () => {
       socket.off("roomCreated", onRoomCreated);
       socket.off("state", onState);
       socket.off("joinError", onJoinError);
       socket.off("playerMoved", onPlayerMoved);
       socket.off("moveRejected", onMoveRejected);
+      socket.off("roomChatHistory", onRoomChatHistory);
+      socket.off("roomChatMessage", onRoomChatMessage);
     };
   }, [socket]);
 
@@ -1468,8 +1481,29 @@ function useGameState(socket: Socket | null) {
     setPvpTrade(null);
   };
 
+  const sendRoomChat = (text: string) => {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    if (roomCode === "SOLO") {
+      const me = players[0];
+      setRoomChatMessages((prev) => [
+        ...prev,
+        {
+          id: `solo-${Date.now()}`,
+          playerId: me?.id ?? "solo",
+          playerName: me?.name ?? "You",
+          text: trimmed.slice(0, 120),
+          ts: Date.now(),
+        },
+      ]);
+      return;
+    }
+    if (socket && roomCode) socket.emit("chatMessage", trimmed);
+  };
+
   const leaveRoom = () => {
     clearGigiEventStorage();
+    setRoomChatMessages([]);
     setPhase("home");
     setRoomCode("");
     setPlayers([]);
@@ -1539,7 +1573,9 @@ function useGameState(socket: Socket | null) {
     executeTrade,
     cancelTrade,
     startSingleplayer,
-    leaveRoom
+    leaveRoom,
+    roomChatMessages,
+    sendRoomChat,
   };
 }
 
@@ -1674,6 +1710,12 @@ export default function App() {
   const effectivePhase: Phase =
     isMultiplayer && game.phase === "battle" && !isMyBattle ? "map" : game.phase;
 
+  const currentMapLoc = currentPlayer ? LOCATIONS[currentPlayer.location] : null;
+  const currentMapWildPool = currentMapLoc ? getWildPool(currentMapLoc) : [];
+  const canEncounterOnMap =
+    currentMapWildPool.length > 0 &&
+    (currentMapLoc?.type === "grass" || currentMapLoc?.type === "cave" || currentMapLoc?.type === "water");
+
   const viewScreen: "home" | "lobby" | "sprite" | "starter" | "map" =
     effectivePhase === "home"
       ? "home"
@@ -1692,8 +1734,8 @@ export default function App() {
   }, [viewScreen, currentPlayer?.location, currentPlayer?.id]);
 
   return (
-    <div className="min-h-screen p-3 sm:p-4 pb-0">
-      <header className="mb-3 sm:mb-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 pb-3 border-b-2 border-amber-500/30">
+    <div className={`min-h-screen p-3 sm:p-4 pb-0 ${viewScreen === "map" ? "app-map-view" : ""}`}>
+      <header className="app-site-header mb-3 sm:mb-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 pb-3 border-b-2 border-amber-500/30">
         <h1 className="text-sm sm:text-xl text-yellow-300 truncate font-bold">Pallet Town Demo</h1>
         {viewScreen !== "home" && (
           <div className="text-xs sm:text-sm text-gray-300">
@@ -1718,12 +1760,12 @@ export default function App() {
         )}
 
         {viewScreen !== "home" && game.players.length > 0 && !isMultiplayer && (
-          <div className="mb-4">
+          <div className="app-above-map mb-4">
             <PlayerSwitcher players={game.players} current={game.currentPlayerIndex} setCurrent={game.setCurrentPlayerIndex} />
           </div>
         )}
         {viewScreen !== "home" && isMultiplayer && currentPlayer && (
-          <div className="mb-2 text-xs text-gray-400">Playing as <strong className="text-yellow-300">{currentPlayer.name}</strong></div>
+          <div className="app-above-map mb-2 text-xs text-gray-400">Playing as <strong className="text-yellow-300">{currentPlayer.name}</strong></div>
         )}
 
         {viewScreen === "lobby" && (
@@ -1779,6 +1821,14 @@ export default function App() {
             requestPvpBattle={game.requestPvpBattle}
             requestPvpTrade={game.requestPvpTrade}
             pvpBattle={game.pvpBattle}
+            roomChatMessages={game.roomChatMessages}
+            onSendRoomChat={game.sendRoomChat}
+            roomCode={game.roomCode}
+            onOpenMenu={() => setShowMenu((s) => !s)}
+            onOpenTeam={() => setShowTeam(true)}
+            onOpenKantoMap={() => setShowKantoMap(true)}
+            canEncounter={canEncounterOnMap}
+            searchWild={game.searchWild}
           />
         )}
         <div id="bottom-nav-placeholder"></div>
@@ -2363,7 +2413,7 @@ export default function App() {
         })()}
       </main>
       {viewScreen === "map" && (
-        <BottomNav onTeam={() => setShowTeam(true)} onMap={() => setShowKantoMap(true)} onMenu={() => setShowMenu((s)=>!s)} />
+        <BottomNav className="app-bottom-nav-desktop" onTeam={() => setShowTeam(true)} onMap={() => setShowKantoMap(true)} onMenu={() => setShowMenu((s)=>!s)} />
       )}
       {showKantoMap && viewScreen === "map" && currentPlayer && (
         <KantoMapView

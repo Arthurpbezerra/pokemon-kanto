@@ -8,6 +8,7 @@ import {
   getTriggerAt,
   getWarpAt,
   isBlockedTile,
+  isGrassEncounterTile,
   isPlayableMapId,
 } from "./palletMaps";
 
@@ -77,24 +78,34 @@ export type OverworldMapDef = {
   spawn: { x: number; y: number };
   blockedRects: Rect[];
   collisionRows?: string[];
+  /** Per-tile tall grass for step encounters (`G` = grass, `.` = path, `#` = blocked). */
+  grassRows?: string[];
+  /** Default step encounter rate on grass tiles (0–255). */
+  encounterChanceBase?: number;
   encounterZones: EncounterZone[];
   warps: Warp[];
   triggers: TileTrigger[];
   pointsOfInterest?: { label: string; x: number; y: number }[];
+  /** follow = GBA camera tracks player; fit = show full map centered (interiors). */
+  viewportMode?: "follow" | "fit";
+  /** Canvas/camera fill outside the map when viewportMode is fit. */
+  letterboxColor?: string;
 };
 
-export { PLAYER_SPRITE_PRESETS, DEFAULT_SPAWN, canonicalMapId, getEncounterZone, getTriggerAt, getWarpAt };
+export { PLAYER_SPRITE_PRESETS, DEFAULT_SPAWN, canonicalMapId, getEncounterZone, getTriggerAt, getWarpAt, isGrassEncounterTile };
 
 export const LOCATION_TO_MAP_ID: Record<string, string> = {
   "Pallet Town": "pallet_town",
+  "Viridian Forest": "viridian_forest",
 };
 
 export const MAP_ID_TO_LOCATION: Record<string, string> = Object.fromEntries(
   Object.values(PALLET_MAPS).map((m) => [m.id, m.locationName])
 );
 
-export function getMapForLocation(_location: string): OverworldMapDef {
-  return getPalletMap("pallet_town");
+export function getMapForLocation(location: string): OverworldMapDef {
+  const mapId = LOCATION_TO_MAP_ID[location] ?? "pallet_town";
+  return getPalletMap(mapId);
 }
 
 export function getMapById(mapId: string): OverworldMapDef {
