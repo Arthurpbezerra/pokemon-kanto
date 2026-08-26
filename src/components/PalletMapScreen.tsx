@@ -227,6 +227,7 @@ export default function PalletMapScreen({
             ) : null
           }
           onDirection={(dir) => controls()?.setPadDirection(dir)}
+          onDirectionTap={(dir) => controls()?.queuePadStep(dir)}
           onA={() => controls()?.queueInteract()}
           onB={() => controls()?.padCancel()}
           onStart={onOpenMenu}

@@ -23,6 +23,7 @@ type NearbyPlayer = {
 
 export type OverworldPhaserHandle = {
   setPadDirection: (dir: Direction | null) => void;
+  queuePadStep: (dir: Direction) => void;
   queueInteract: () => void;
   padCancel: () => void;
 };
@@ -89,6 +90,7 @@ export default function OverworldPhaser({
   useEffect(() => {
     onControlsReady?.({
       setPadDirection: (dir) => sceneRef.current?.setPadDirection(dir),
+      queuePadStep: (dir) => sceneRef.current?.queuePadStep(dir),
       queueInteract: () => sceneRef.current?.queueInteract(),
       padCancel: () => padCancelRef.current?.(),
     });

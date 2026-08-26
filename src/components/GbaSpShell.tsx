@@ -4,6 +4,7 @@ import type { Direction } from "../world/tileWorld";
 
 type ControlProps = {
   onDirection: (dir: Direction | null) => void;
+  onDirectionTap?: (dir: Direction) => void;
   onA: () => void;
   onB: () => void;
   onStart?: () => void;
@@ -25,9 +26,13 @@ function dirFromPoint(el: HTMLElement, clientX: number, clientY: number): Direct
   const r = el.getBoundingClientRect();
   const dx = clientX - (r.left + r.width / 2);
   const dy = clientY - (r.top + r.height / 2);
-  if (dx * dx + dy * dy < 900) return null;
+  if (dx * dx + dy * dy < 400) return null;
   if (Math.abs(dx) > Math.abs(dy)) return dx < 0 ? "left" : "right";
   return dy < 0 ? "up" : "down";
+}
+
+function blockTouchDefault(e: React.SyntheticEvent) {
+  e.preventDefault();
 }
 
 function SpHit({
@@ -48,8 +53,10 @@ function SpHit({
       type="button"
       className={`gba-sp-hit ${className}${padDebug ? " gba-sp-hit--debug" : ""}`}
       aria-label={ariaLabel}
+      onContextMenu={blockTouchDefault}
       onPointerDown={(e) => {
-        e.preventDefault();
+        blockTouchDefault(e);
+        e.currentTarget.setPointerCapture(e.pointerId);
         onPress?.();
       }}
     >
@@ -60,6 +67,7 @@ function SpHit({
 
 function GbaSpControls({
   onDirection,
+  onDirectionTap,
   onA,
   onB,
   onStart,
@@ -72,12 +80,14 @@ function GbaSpControls({
   const padRef = useRef<HTMLDivElement | null>(null);
   const holding = useRef(false);
 
+  const releasePad = () => {
+    if (!holding.current) return;
+    holding.current = false;
+    onDirection(null);
+  };
+
   useEffect(() => {
-    const stop = () => {
-      if (!holding.current) return;
-      holding.current = false;
-      onDirection(null);
-    };
+    const stop = () => releasePad();
     window.addEventListener("pointerup", stop);
     window.addEventListener("pointercancel", stop);
     return () => {
@@ -85,6 +95,25 @@ function GbaSpControls({
       window.removeEventListener("pointercancel", stop);
     };
   }, [onDirection]);
+
+  useEffect(() => {
+    const el = padRef.current;
+    if (!el) return;
+    const block = (e: Event) => e.preventDefault();
+    el.addEventListener("touchstart", block, { passive: false });
+    el.addEventListener("touchmove", block, { passive: false });
+    return () => {
+      el.removeEventListener("touchstart", block);
+      el.removeEventListener("touchmove", block);
+    };
+  }, []);
+
+  const applyPadDir = (el: HTMLElement, clientX: number, clientY: number) => {
+    const dir = dirFromPoint(el, clientX, clientY);
+    if (!dir) return;
+    onDirection(dir);
+    onDirectionTap?.(dir);
+  };
 
   return (
     <div className="gba-sp-deck-stage">
@@ -104,15 +133,29 @@ function GbaSpControls({
             className={`gba-sp-hit gba-sp-hit--dpad${padDebug ? " gba-sp-hit--debug" : ""}`}
             role="group"
             aria-label="D-pad"
+            onContextMenu={blockTouchDefault}
             onPointerDown={(e) => {
-              e.preventDefault();
+              blockTouchDefault(e);
               holding.current = true;
-              (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-              onDirection(dirFromPoint(e.currentTarget, e.clientX, e.clientY));
+              e.currentTarget.setPointerCapture(e.pointerId);
+              applyPadDir(e.currentTarget, e.clientX, e.clientY);
             }}
             onPointerMove={(e) => {
               if (!holding.current) return;
-              onDirection(dirFromPoint(e.currentTarget, e.clientX, e.clientY));
+              blockTouchDefault(e);
+              const dir = dirFromPoint(e.currentTarget, e.clientX, e.clientY);
+              onDirection(dir);
+            }}
+            onPointerUp={(e) => {
+              blockTouchDefault(e);
+              if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+                e.currentTarget.releasePointerCapture(e.pointerId);
+              }
+              releasePad();
+            }}
+            onPointerCancel={(e) => {
+              blockTouchDefault(e);
+              releasePad();
             }}
           />
           <SpHit className="gba-sp-hit--a" label="A" onPress={onA} ariaLabel="A — talk / confirm" padDebug={padDebug} />
@@ -133,6 +176,7 @@ export default function GbaSpShell({
   padDebug = false,
   children,
   onDirection,
+  onDirectionTap,
   onA,
   onB,
   onStart,
@@ -161,6 +205,7 @@ export default function GbaSpShell({
 
       <GbaSpControls
         onDirection={onDirection}
+        onDirectionTap={onDirectionTap}
         onA={onA}
         onB={onB}
         onStart={onStart}

@@ -160,6 +160,7 @@ export class OverworldScene extends Phaser.Scene {
   private remotes = new Map<string, RemoteActor>();
   private controls: ControlState = { up: false, down: false, left: false, right: false };
   private pad: ControlState = { up: false, down: false, left: false, right: false };
+  private padStepQueued: Direction | null = null;
   private interactQueued = false;
   private facing: Direction = "down";
   private moving = false;
@@ -230,6 +231,11 @@ export class OverworldScene extends Phaser.Scene {
   public setPadDirection(direction: Direction | null) {
     this.pad = { up: false, down: false, left: false, right: false };
     if (direction) this.pad[direction] = true;
+  }
+
+  /** One tile step on tap (mobile d-pad release before the next frame). */
+  public queuePadStep(direction: Direction) {
+    this.padStepQueued = direction;
   }
 
   public queueInteract() {
@@ -538,7 +544,10 @@ export class OverworldScene extends Phaser.Scene {
 
     this.stepCooldown = Math.max(0, this.stepCooldown - delta);
     if (this.stepCooldown > 0 || this.moving) return;
-    const direction = getDirectionFromControls(this.mergedControls());
+
+    let direction = getDirectionFromControls(this.mergedControls());
+    if (!direction && this.padStepQueued) direction = this.padStepQueued;
+
     if (!direction) {
       stopWalk(this.player, this.facing, this.playerSheetKey);
       if (!this.idleEmitted) {
@@ -547,6 +556,8 @@ export class OverworldScene extends Phaser.Scene {
       }
       return;
     }
+
+    this.padStepQueued = null;
 
     this.facing = direction;
     const dx = direction === "left" ? -1 : direction === "right" ? 1 : 0;
